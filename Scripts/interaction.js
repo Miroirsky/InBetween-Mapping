@@ -173,7 +173,7 @@ class InteractionManager {
             if (bubbleEl) {
                 const bubbleId = Number(bubbleEl.dataset.id);
                 const bubble = this.manager.getBubbleById(bubbleId);
-                if (!bubble || bubble.isLocked) return;
+                if (!bubble) return;
 
                 this.draggedBubble = bubble;
                 bubble.isDragging = true;

@@ -74,7 +74,7 @@ Interactive universe bubbles placed on top of the Perlin noise background, simul
   - `Reset Board`: Removes all bubbles from the board.
 - **Left-click + Drag on a bubble**: Moves the bubble around freely. Cursor changes to `grab` on hover and `grabbing` while dragging.
 - **Right-click on a bubble**: Opens bubble context menu with options:
-  - `Lock Bubble` / `Unlock Bubble`: Toggles position lock (locked bubbles cannot be dragged and resist physics pushes).
+  - `Lock Bubble` / `Unlock Bubble`: Toggles physics lock (locked bubbles can still be moved manually by dragging, but are not affected by the physics simulation).
   - `Remove Universe`: Deletes the bubble.
 
 ### Accessible Parameters (`Values/bubbleConfig.js`)
