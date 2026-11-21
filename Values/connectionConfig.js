@@ -11,15 +11,15 @@ const ConnectionConfig = {
      */
     arrowColor: '#000000',               // Arrow body color (black as requested)
     arrowOutlineColor: '#ffffff',        // Arrow border/outline color for contrast
-    arrowWidth: 3.5,                     // Stroke width in pixels
+    arrowWidth: 2.5,                     // Stroke width in pixels
     arrowHeadLength: 14,                 // Arrowhead length in pixels
-    arrowHeadWidth: 10,                  // Arrowhead width in pixels
+    arrowHeadWidth: 14,                  // Arrowhead width in pixels
 
     /**
      * Text Label Styling
      */
     textColor: '#ffffff',                // Name text color (white as requested)
-    textFontSize: 12,                    // Font size in pixels
+    textFontSize: 25,                    // Font size in pixels
     textBackgroundColor: '#000000',      // Pill background for label readability
     textBorderColor: '#ffffff',          // Pill outline
     textBorderWidth: 1,
@@ -28,8 +28,8 @@ const ConnectionConfig = {
      * Physics Constraint
      * Connected universes are maintained at the exact same repulsion distance.
      */
-    springStrength: 0.12,                // Force pulling/pushing connected bubbles to target distance
-    maxCorrectionPerFrame: 12.0,         // Cap on constraint impulse to prevent jitter
+    springStrength: 0.2,                // Force pulling/pushing connected bubbles to target distance
+    maxCorrectionPerFrame: 100.0,         // Cap on constraint impulse to prevent jitter
 
     /**
      * Bidirectional Curve Separation
