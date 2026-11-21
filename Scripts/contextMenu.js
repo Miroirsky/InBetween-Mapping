@@ -399,9 +399,9 @@ class ContextMenu {
         const conn = this.connectionManager.getConnectionById(connectionId);
         if (!conn) return;
 
-        // Keep label visible while context menu is open
-        const connEl = document.querySelector(`.universe-connection[data-id="${connectionId}"]`);
-        if (connEl) connEl.classList.add('is-active-context');
+        // Keep label and arrow visible/highlighted while context menu is open
+        const connEls = document.querySelectorAll(`.universe-connection[data-id="${connectionId}"], .universe-connection-label[data-id="${connectionId}"]`);
+        connEls.forEach(el => el.classList.add('is-active-context'));
 
         const items = [
             {

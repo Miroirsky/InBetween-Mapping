@@ -103,7 +103,7 @@ Directed black arrows connecting universes with centered labels and distance-kee
 
 ### Controls & Actions
 - **Right-click on a Bubble -> `Add Connection`**: Enters connection mode. Move cursor to target universe and left-click it (or press Escape / click void to cancel).
-- **Mandatory Connection Name**: Prompt modal opens asking for a connection name. Names remain clean and subtle, displaying smoothly centered on the arrow when hovered.
+- **Mandatory Connection Name**: Prompt modal opens asking for a connection name. Names remain clean and subtle, displaying smoothly centered on the arrow when hovered and always rendered on top of all arrows with dark outline contrast.
 - **Fixed Distance Constraint**: Connected universes are constrained by physics to always remain at the exact same repulsion distance (`targetDistance`).
 - **Bidirectional Connections**: Connections can be created in both directions ($A \rightarrow B$ and $B \rightarrow A$) with different names. Curved paths ensure both arrows and labels remain distinct and readable.
 - **Right-click on a Connection (line or label)**:

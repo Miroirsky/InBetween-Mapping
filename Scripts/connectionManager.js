@@ -31,11 +31,17 @@ class ConnectionManager {
                     <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000000" flood-opacity="0.6"/>
                 </filter>
             </defs>
-            <g id="connections-group"></g>
+            <!-- 1. All connection arrow lines & heads (bottom) -->
+            <g id="connections-arrows-group"></g>
+            <!-- 2. All connection labels (rendered on top of all arrows) -->
+            <g id="connections-labels-group"></g>
+            <!-- 3. Preview line when creating new connections -->
             <g id="preview-group"></g>
         `;
 
-        this.connectionsGroup = this.svg.getElementById('connections-group');
+        this.arrowsGroup = this.svg.getElementById('connections-arrows-group');
+        this.labelsGroup = this.svg.getElementById('connections-labels-group');
+        this.connectionsGroup = this.arrowsGroup; // alias for backwards compatibility
         this.previewGroup = this.svg.getElementById('preview-group');
 
         this.bindHoverEvents();
@@ -134,15 +140,32 @@ class ConnectionManager {
         if (this.hoveredConnectionId === connId) return;
         this.hoveredConnectionId = connId;
 
-        const allConnEls = this.connectionsGroup.querySelectorAll('.universe-connection');
-        allConnEls.forEach(el => {
-            const id = Number(el.dataset.id);
-            if (id === connId) {
-                el.classList.add('is-hovered');
-            } else {
-                el.classList.remove('is-hovered');
-            }
-        });
+        // Toggle hover on arrow group
+        if (this.arrowsGroup) {
+            const allArrowEls = this.arrowsGroup.querySelectorAll('.universe-connection');
+            allArrowEls.forEach(el => {
+                const id = Number(el.dataset.id);
+                if (id === connId) {
+                    el.classList.add('is-hovered');
+                } else {
+                    el.classList.remove('is-hovered');
+                }
+            });
+        }
+
+        // Toggle hover on label group (and elevate hovered label to the top)
+        if (this.labelsGroup) {
+            const allLabelEls = this.labelsGroup.querySelectorAll('.universe-connection-label');
+            allLabelEls.forEach(el => {
+                const id = Number(el.dataset.id);
+                if (id === connId) {
+                    el.classList.add('is-hovered');
+                    this.labelsGroup.appendChild(el);
+                } else {
+                    el.classList.remove('is-hovered');
+                }
+            });
+        }
     }
 
     /**
@@ -273,19 +296,18 @@ class ConnectionManager {
      * Main render pass for all connections, arrows, and labels
      */
     render() {
-        if (!this.connectionsGroup) return;
+        if (!this.arrowsGroup || !this.labelsGroup) return;
 
         const radius = this.bubbleManager.currentRadius;
         const cfg = this.config;
         const currentIds = new Set(this.connections.map(c => c.id));
 
-        // Remove any deleted connection elements from SVG
-        const existingEls = this.connectionsGroup.querySelectorAll('.universe-connection');
-        existingEls.forEach(el => {
-            const id = Number(el.dataset.id);
-            if (!currentIds.has(id)) {
-                el.remove();
-            }
+        // Remove any deleted connection elements from arrowsGroup and labelsGroup
+        this.arrowsGroup.querySelectorAll('.universe-connection').forEach(el => {
+            if (!currentIds.has(Number(el.dataset.id))) el.remove();
+        });
+        this.labelsGroup.querySelectorAll('.universe-connection-label').forEach(el => {
+            if (!currentIds.has(Number(el.dataset.id))) el.remove();
         });
 
         for (let i = 0; i < this.connections.length; i++) {
@@ -367,46 +389,64 @@ class ConnectionManager {
 
             const arrowPolyPoints = `${arrowTipX},${arrowTipY} ${leftWingX},${leftWingY} ${rightWingX},${rightWingY}`;
             const safeName = conn.name || '';
+            const isHovered = conn.id === this.hoveredConnectionId;
 
-            let connGroup = this.connectionsGroup.querySelector(`.universe-connection[data-id="${conn.id}"]`);
-            if (!connGroup) {
-                connGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                connGroup.setAttribute('class', 'universe-connection');
-                connGroup.setAttribute('data-id', conn.id);
-                connGroup.setAttribute('filter', 'url(#arrow-shadow)');
+            // 1. Render/Update Arrow in arrowsGroup (Bottom Layer)
+            let arrowGroup = this.arrowsGroup.querySelector(`.universe-connection[data-id="${conn.id}"]`);
+            if (!arrowGroup) {
+                arrowGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                arrowGroup.setAttribute('class', 'universe-connection');
+                arrowGroup.setAttribute('data-id', conn.id);
+                arrowGroup.setAttribute('filter', 'url(#arrow-shadow)');
 
-                connGroup.innerHTML = `
+                arrowGroup.innerHTML = `
                     <path fill="none" stroke="${cfg.arrowColor}" stroke-width="${cfg.arrowWidth}" stroke-linecap="round" class="conn-line" pointer-events="stroke"/>
                     <polygon fill="${cfg.arrowColor}" class="conn-arrowhead" pointer-events="all"/>
                     <path fill="none" stroke="rgba(0,0,0,0.001)" stroke-width="36" class="conn-hitbox" pointer-events="stroke"/>
-                    <g class="connection-label-group">
-                        <rect x="-60" y="-16" width="120" height="32" fill="rgba(0,0,0,0.001)" class="conn-label-hitbox" pointer-events="all"/>
-                        <text x="0" y="0" class="conn-label-text" fill="${cfg.textColor}" text-anchor="middle" dominant-baseline="central"></text>
-                    </g>
                 `;
-                this.connectionsGroup.appendChild(connGroup);
+                this.arrowsGroup.appendChild(arrowGroup);
             }
 
-            // Update attributes on persistent DOM elements without destroying them
-            const line = connGroup.querySelector('.conn-line');
+            const line = arrowGroup.querySelector('.conn-line');
             if (line) line.setAttribute('d', pathD);
 
-            const head = connGroup.querySelector('.conn-arrowhead');
+            const head = arrowGroup.querySelector('.conn-arrowhead');
             if (head) head.setAttribute('points', arrowPolyPoints);
 
-            const hitbox = connGroup.querySelector('.conn-hitbox');
+            const hitbox = arrowGroup.querySelector('.conn-hitbox');
             if (hitbox) hitbox.setAttribute('d', pathD);
 
-            const labelGroup = connGroup.querySelector('.connection-label-group');
-            if (labelGroup) labelGroup.setAttribute('transform', `translate(${midX}, ${midY})`);
+            if (isHovered) {
+                arrowGroup.classList.add('is-hovered');
+            } else {
+                arrowGroup.classList.remove('is-hovered');
+            }
 
-            const labelText = connGroup.querySelector('.conn-label-text');
+            // 2. Render/Update Label in labelsGroup (Top Layer - Rendered on top of all arrows)
+            let labelGroup = this.labelsGroup.querySelector(`.universe-connection-label[data-id="${conn.id}"]`);
+            if (!labelGroup) {
+                labelGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                labelGroup.setAttribute('class', 'universe-connection-label universe-connection');
+                labelGroup.setAttribute('data-id', conn.id);
+
+                labelGroup.innerHTML = `
+                    <rect x="-60" y="-16" width="120" height="32" fill="rgba(0,0,0,0.001)" class="conn-label-hitbox" pointer-events="all"/>
+                    <text x="0" y="0" class="conn-label-text" fill="${cfg.textColor}" text-anchor="middle" dominant-baseline="central"></text>
+                `;
+                this.labelsGroup.appendChild(labelGroup);
+            }
+
+            labelGroup.setAttribute('transform', `translate(${midX}, ${midY})`);
+
+            const labelText = labelGroup.querySelector('.conn-label-text');
             if (labelText && labelText.textContent !== safeName) {
                 labelText.textContent = safeName;
             }
 
-            if (conn.id === this.hoveredConnectionId) {
-                connGroup.classList.add('is-hovered');
+            if (isHovered) {
+                labelGroup.classList.add('is-hovered');
+            } else {
+                labelGroup.classList.remove('is-hovered');
             }
         }
     }
