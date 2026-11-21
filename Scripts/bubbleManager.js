@@ -105,29 +105,78 @@ class BubbleManager {
     }
 
     /**
+     * Recalculates nextId from current bubbles so it is always a valid positive integer.
+     */
+    syncNextId() {
+        let maxId = 0;
+        for (const b of this.bubbles) {
+            const num = Number(b.id);
+            if (Number.isFinite(num) && num > maxId) {
+                maxId = Math.floor(num);
+            }
+        }
+        this.nextId = maxId + 1;
+        return this.nextId;
+    }
+
+    /**
      * Creates and adds a new universe bubble.
      */
     createBubble(x, y, name = '', color = null, customId = null, isLocked = false) {
         this.calculateDimensions();
 
-        // Clamp initial position to be inside the visible window viewport (allowing placement outside the main square)
-        const bounds = this.getViewportBounds();
-        let targetX = x;
-        let targetY = y;
+        let targetX = Number.isFinite(Number(x)) ? Number(x) : 500;
+        let targetY = Number.isFinite(Number(y)) ? Number(y) : 500;
 
-        if (bounds.maxX > bounds.minX + 2 * this.currentRadius) {
-            targetX = Math.max(bounds.minX + this.currentRadius, Math.min(bounds.maxX - this.currentRadius, x));
-        }
-        if (bounds.maxY > bounds.minY + 2 * this.currentRadius) {
-            targetY = Math.max(bounds.minY + this.currentRadius, Math.min(bounds.maxY - this.currentRadius, y));
+        const hasValidCustomId = customId !== null && customId !== undefined && customId !== '' && Number.isFinite(Number(customId)) && Number(customId) > 0;
+        const isRemoteOrRestore = hasValidCustomId || (this.onlineManager && this.onlineManager.isApplyingRemote);
+
+        // Only clamp initial position to current viewport when user manually creates a new bubble
+        if (!isRemoteOrRestore) {
+            const bounds = this.getViewportBounds();
+            if (bounds.maxX > bounds.minX + 2 * this.currentRadius) {
+                targetX = Math.max(bounds.minX + this.currentRadius, Math.min(bounds.maxX - this.currentRadius, targetX));
+            }
+            if (bounds.maxY > bounds.minY + 2 * this.currentRadius) {
+                targetY = Math.max(bounds.minY + this.currentRadius, Math.min(bounds.maxY - this.currentRadius, targetY));
+            }
         }
 
-        const id = customId !== null ? Number(customId) : this.nextId++;
-        if (customId !== null) {
-            this.nextId = Math.max(this.nextId, id + 1);
+        this.syncNextId();
+        const id = hasValidCustomId ? Math.floor(Number(customId)) : this.nextId;
+
+        // Prevent duplicate bubble IDs
+        const existing = this.getBubbleById(id);
+        if (existing) {
+            existing.x = targetX;
+            existing.y = targetY;
+            existing.vx = 0;
+            existing.vy = 0;
+            if (name && typeof name === 'string' && name.trim().length > 0) {
+                existing.name = name.trim();
+                if (existing.nameElement) {
+                    existing.nameElement.textContent = existing.name;
+                    existing.nameElement.title = existing.name;
+                }
+            }
+            if (color) {
+                existing.color = color;
+            }
+            existing.isLocked = !!isLocked;
+            if (existing.isLocked) {
+                existing.element.classList.add('is-locked');
+            } else {
+                existing.element.classList.remove('is-locked');
+            }
+            this.applyBubbleStyle(existing);
+            this.updateElementPosition(existing);
+            this.syncNextId();
+            return existing;
         }
 
-        const bubbleName = (name && typeof name === 'string' && name.trim().length > 0) ? name.trim() : `Universe ${id}`;
+        const bubbleName = (name && typeof name === 'string' && name.trim().length > 0 && !name.includes('NaN'))
+            ? name.trim()
+            : `Universe ${id}`;
         const bubbleColor = color || this.config.bubbleColor || '#000000';
 
         const el = document.createElement('div');
@@ -176,6 +225,7 @@ class BubbleManager {
 
         this.container.appendChild(el);
         this.bubbles.push(bubble);
+        this.syncNextId();
 
         if (this.onlineManager && this.onlineManager.isOnline) {
             this.onlineManager.onBubbleCreated(bubble);
@@ -194,6 +244,7 @@ class BubbleManager {
         }
         this.container.innerHTML = '';
         this.bubbles = [];
+        this.nextId = 1;
     }
 
     /**
@@ -235,23 +286,32 @@ class BubbleManager {
      * Remove a single bubble.
      */
     removeBubble(id) {
-        const index = this.bubbles.findIndex(b => b.id === id);
+        const targetId = Number(id);
+        const index = this.bubbles.findIndex(b => b.id === targetId || (Number.isNaN(targetId) && Number.isNaN(b.id)));
         if (index !== -1) {
             const bubble = this.bubbles[index];
-            bubble.element.classList.add('bubble-destroying');
+            this.bubbles.splice(index, 1);
+            this.syncNextId();
 
             if (this.connectionManager) {
-                this.connectionManager.removeConnectionsForBubble(id);
+                this.connectionManager.removeConnectionsForBubble(targetId);
             }
 
-            setTimeout(() => {
-                if (bubble.element.parentNode) {
+            if (this.onlineManager && this.onlineManager.isOnline) {
+                this.onlineManager.onBubbleRemoved(targetId);
+            }
+
+            if (this.onlineManager && this.onlineManager.isApplyingRemote) {
+                if (bubble.element && bubble.element.parentNode) {
                     bubble.element.parentNode.removeChild(bubble.element);
                 }
-            }, 180);
-            this.bubbles.splice(index, 1);
-            if (this.onlineManager && this.onlineManager.isOnline) {
-                this.onlineManager.onBubbleRemoved(id);
+            } else {
+                bubble.element.classList.add('bubble-destroying');
+                setTimeout(() => {
+                    if (bubble.element && bubble.element.parentNode) {
+                        bubble.element.parentNode.removeChild(bubble.element);
+                    }
+                }, 180);
             }
         }
     }
@@ -282,27 +342,39 @@ class BubbleManager {
      * Deletes all bubbles on board.
      */
     resetBoard() {
-        if (this.savingManager) {
+        const isOnline = !!(this.onlineManager && this.onlineManager.isOnline);
+        if (this.savingManager && !isOnline) {
             this.savingManager.clearActiveBoard();
         }
-        for (const bubble of this.bubbles) {
-            bubble.element.classList.add('bubble-destroying');
-        }
+
+        const oldElements = this.bubbles.map(b => b.element);
+        this.bubbles = [];
+        this.nextId = 1;
+
         if (this.connectionManager) {
             this.connectionManager.reset();
         }
+
+        for (const el of oldElements) {
+            if (el) el.classList.add('bubble-destroying');
+        }
         setTimeout(() => {
-            this.container.innerHTML = '';
-            this.bubbles = [];
+            for (const el of oldElements) {
+                if (el && el.parentNode) {
+                    el.parentNode.removeChild(el);
+                }
+            }
         }, 180);
 
-        if (this.onlineManager && this.onlineManager.isOnline) {
+        if (isOnline) {
             this.onlineManager.onBoardReset();
         }
     }
 
     getBubbleById(id) {
-        return this.bubbles.find(b => b.id === Number(id));
+        const numId = Number(id);
+        if (!Number.isFinite(numId)) return undefined;
+        return this.bubbles.find(b => b.id === numId);
     }
 
     /**

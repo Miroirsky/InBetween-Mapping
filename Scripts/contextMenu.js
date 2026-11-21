@@ -265,10 +265,13 @@ class ContextMenu {
                     </svg>
                 `,
                 action: () => {
+                    const nextNum = typeof this.manager.syncNextId === 'function'
+                        ? this.manager.syncNextId()
+                        : (Number.isFinite(this.manager.nextId) ? this.manager.nextId : 1);
                     this.showPrompt({
                         title: 'Create Universe',
                         placeholder: 'Enter universe name...',
-                        defaultValue: `Universe ${this.manager.nextId}`,
+                        defaultValue: `Universe ${nextNum}`,
                         confirmText: 'Create',
                         onSubmit: (name) => {
                             this.manager.createBubble(boardX, boardY, name);

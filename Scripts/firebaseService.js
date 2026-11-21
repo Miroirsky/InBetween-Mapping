@@ -4,7 +4,8 @@
  * Handles communication with Firebase Realtime Database and Cloud Firestore.
  * - Realtime Database: Synchronizes rapid live board changes (bubbles, connections, movement).
  * - Cloud Firestore: Archives room snapshots and logs session events ONLY when users join or leave.
- * - Graceful fallback / simulation: Seamlessly functions for local testing if credentials are not yet configured.
+ * - Automatic data sanitization & self-healing against corrupted/NaN nodes.
+ * - Heartbeat + onDisconnect presence tracking with automatic stale peer eviction.
  */
 
 class FirebaseService {
@@ -17,10 +18,17 @@ class FirebaseService {
         this.app = null;
         this.db = null;
         this.firestore = null;
-        this.auth = null;
 
         this.statusListeners = [];
         this.presenceRef = null;
+        this.roomPresenceRef = null;
+        this.presenceConnectedRef = null;
+        this.presenceConnectedHandler = null;
+        this.presenceHeartbeatTimer = null;
+        this.presenceSweepTimer = null;
+        this.peerHeartbeatTracker = new Map(); // peerId -> { lastSeenVal, observedAt }
+        this.latestPresenceRaw = {};
+
         this.boardRef = null;
         this.connectedRef = null;
 
@@ -56,19 +64,25 @@ class FirebaseService {
      */
     getActiveConfig() {
         const key = (this.config && this.config.customConfigStorageKey) || 'inbetween_mapping_custom_firebase_config';
+        let opts = Object.assign({}, (this.config && this.config.firebaseOptions) || {});
         try {
             const custom = localStorage.getItem(key);
             if (custom) {
                 const parsed = JSON.parse(custom);
-                if (parsed && parsed.apiKey && parsed.projectId) {
-                    return parsed;
+                if (parsed && (parsed.apiKey || parsed.projectId)) {
+                    opts = Object.assign({}, opts, parsed);
                 }
             }
         } catch (e) {
             console.warn('Could not read custom Firebase config from localStorage:', e);
         }
 
-        return (this.config && this.config.firebaseOptions) || {};
+        // Auto-infer default databaseURL if missing but projectId is present
+        if (opts.projectId && (!opts.databaseURL || opts.databaseURL.trim().length === 0)) {
+            opts.databaseURL = `https://${opts.projectId}-default-rtdb.firebaseio.com`;
+        }
+
+        return opts;
     }
 
     /**
@@ -81,7 +95,59 @@ class FirebaseService {
     }
 
     /**
-     * Initializes Firebase App, Auth, Realtime Database, and Firestore.
+     * Sanitizes a bubble object so NaN or undefined values can never be written to Firebase.
+     */
+    sanitizeBubble(b, fallbackId = null) {
+        if (!b || typeof b !== 'object') return null;
+        const rawId = (b.id !== undefined && b.id !== null && b.id !== '') ? Number(b.id) : Number(fallbackId);
+        const x = Number(b.x);
+        const y = Number(b.y);
+
+        if (!Number.isFinite(rawId) || rawId <= 0 || !Number.isFinite(x) || !Number.isFinite(y)) {
+            return null;
+        }
+
+        const id = Math.floor(rawId);
+        const rawName = (b.name && typeof b.name === 'string' && !b.name.includes('NaN')) ? b.name.trim() : '';
+
+        return {
+            id,
+            name: rawName.length > 0 ? rawName : `Universe ${id}`,
+            color: (b.color && typeof b.color === 'string') ? b.color : '#000000',
+            x: Math.round(x * 100) / 100,
+            y: Math.round(y * 100) / 100,
+            isLocked: !!b.isLocked,
+            updatedBy: (b.updatedBy && typeof b.updatedBy === 'string') ? b.updatedBy : 'peer',
+            updatedAt: Number.isFinite(Number(b.updatedAt)) ? Number(b.updatedAt) : Date.now()
+        };
+    }
+
+    /**
+     * Sanitizes a connection object so NaN or undefined values can never be written to Firebase.
+     */
+    sanitizeConnection(c, fallbackId = null) {
+        if (!c || typeof c !== 'object') return null;
+        const rawId = (c.id !== undefined && c.id !== null && c.id !== '') ? Number(c.id) : Number(fallbackId);
+        const fromId = Number(c.fromId);
+        const toId = Number(c.toId);
+
+        if (!Number.isFinite(rawId) || rawId <= 0 || !Number.isFinite(fromId) || fromId <= 0 || !Number.isFinite(toId) || toId <= 0) {
+            return null;
+        }
+
+        const id = Math.floor(rawId);
+        const rawName = (c.name && typeof c.name === 'string' && !c.name.includes('NaN')) ? c.name.trim() : '';
+
+        return {
+            id,
+            fromId: Math.floor(fromId),
+            toId: Math.floor(toId),
+            name: rawName.length > 0 ? rawName : `Connection ${id}`
+        };
+    }
+
+    /**
+     * Initializes Firebase App, Realtime Database, and Cloud Firestore.
      */
     async initialize() {
         if (this.isInitialized && (this.db || this.isSimulated)) {
@@ -91,9 +157,7 @@ class FirebaseService {
         const opts = this.getActiveConfig();
         const hasCreds = this.hasValidCredentials();
 
-        // Check if Firebase SDK scripts are loaded
         if (typeof window.firebase === 'undefined' || !hasCreds) {
-            // Enable Simulation Mode so user can test immediately
             this.isSimulated = true;
             this.isInitialized = true;
             this.isConnected = true;
@@ -114,29 +178,28 @@ class FirebaseService {
             }
 
             if (typeof window.firebase.database === 'function') {
-                this.db = window.firebase.database();
+                try {
+                    this.db = window.firebase.database();
+                } catch (dbErr) {
+                    console.warn('Realtime Database initialization warning:', dbErr.message);
+                }
             }
 
             if (typeof window.firebase.firestore === 'function') {
-                this.firestore = window.firebase.firestore();
-            }
-
-            if (typeof window.firebase.auth === 'function') {
-                this.auth = window.firebase.auth();
-                // Attempt anonymous sign-in if enabled
                 try {
-                    await this.auth.signInAnonymously();
-                } catch (authErr) {
-                    // Non-fatal if project allows unauthenticated or rules permit
-                    console.info('Anonymous sign-in note:', authErr.message);
+                    this.firestore = window.firebase.firestore();
+                } catch (fsErr) {
+                    console.warn('Firestore initialization warning:', fsErr.message);
                 }
             }
 
             this.isInitialized = true;
             this.isSimulated = false;
 
-            // Monitor connection status via Realtime Database
             if (this.db) {
+                if (this.connectedRef) {
+                    this.connectedRef.off();
+                }
                 this.connectedRef = this.db.ref('.info/connected');
                 this.connectedRef.on('value', (snap) => {
                     this.isConnected = !!snap.val();
@@ -160,7 +223,6 @@ class FirebaseService {
             return { success: true, simulated: false };
         } catch (err) {
             console.error('Firebase initialization error:', err);
-            // Fallback to simulation mode to avoid breaking application
             this.isSimulated = true;
             this.isInitialized = true;
             this.isConnected = true;
@@ -177,42 +239,170 @@ class FirebaseService {
 
     /**
      * Set up user presence in the online room.
-     * Uses Realtime Database onDisconnect() to automatically clean up on disconnect.
+     * Combines Realtime Database .info/connected + onDisconnect().remove() + active server-time heartbeats
+     * and automatic stale-peer cleanup so disconnected players never remain visible.
      */
     setupPresence(roomId, user, onPresenceUpdate = null) {
         if (this.isSimulated || !this.db) {
-            // Local simulation presence via BroadcastChannel / localStorage
             this.setupSimulatedPresence(roomId, user, onPresenceUpdate);
             return;
         }
 
-        const path = `${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.presencePath}/${user.id}`;
-        this.presenceRef = this.db.ref(path);
+        this.stopPresenceTimersAndListeners();
 
-        const presenceData = {
+        const presenceBasePath = `${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.presencePath}`;
+        const userPresencePath = `${presenceBasePath}/${user.id}`;
+        this.presenceRef = this.db.ref(userPresencePath);
+        this.roomPresenceRef = this.db.ref(presenceBasePath);
+
+        const buildPresencePayload = () => ({
             id: user.id,
             name: user.name || 'Anonymous',
             color: user.color || '#4da6ff',
-            joinedAt: window.firebase.database.ServerValue.TIMESTAMP
+            lastSeen: window.firebase.database.ServerValue.TIMESTAMP
+        });
+
+        const registerOnServer = () => {
+            if (!this.presenceRef) return;
+            const payload = buildPresencePayload();
+            this.presenceRef.onDisconnect().remove().then(() => {
+                if (this.presenceRef) {
+                    this.presenceRef.set(payload);
+                }
+            }).catch(() => {
+                if (this.presenceRef) {
+                    this.presenceRef.set(payload);
+                }
+            });
         };
 
-        // When disconnected or tab is closed, automatically delete user presence
-        this.presenceRef.onDisconnect().remove();
-        this.presenceRef.set(presenceData);
-
-        // Listen for all users in the room
-        const roomPresenceRef = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.presencePath}`);
-        roomPresenceRef.on('value', (snap) => {
-            const val = snap.val() || {};
-            const users = Object.values(val);
-            if (typeof onPresenceUpdate === 'function') {
-                onPresenceUpdate(users);
+        // 1. Register immediately and re-register whenever .info/connected transitions to true
+        this.presenceConnectedRef = this.db.ref('.info/connected');
+        this.presenceConnectedHandler = (snap) => {
+            if (snap.val() === true) {
+                registerOnServer();
             }
+        };
+        this.presenceConnectedRef.on('value', this.presenceConnectedHandler);
+        registerOnServer();
+
+        // 2. Heartbeat every 4 seconds using Firebase ServerValue.TIMESTAMP
+        this.presenceHeartbeatTimer = setInterval(() => {
+            if (this.presenceRef && this.isConnected) {
+                this.presenceRef.update(buildPresencePayload()).catch(() => {});
+            }
+        }, 4000);
+
+        // 3. Evaluate and filter active peers (evicting stale / disconnected entries)
+        const evaluateActiveUsers = (rawMap) => {
+            const entries = Object.entries(rawMap || {});
+            const nowLocal = Date.now();
+            const staleTimeoutMs = 13000; // 13 seconds (3+ missed 4s heartbeats)
+
+            // Find highest server timestamp among current entries (our own heartbeat keeps this current)
+            let maxServerTime = 0;
+            for (const [, u] of entries) {
+                if (u && Number.isFinite(Number(u.lastSeen)) && Number(u.lastSeen) > maxServerTime) {
+                    maxServerTime = Number(u.lastSeen);
+                }
+            }
+
+            const activeUsers = [];
+            const seenIds = new Set();
+
+            for (const [key, u] of entries) {
+                if (!u || typeof u !== 'object' || !u.id || key === 'NaN' || key === 'undefined') {
+                    if (this.roomPresenceRef) {
+                        this.roomPresenceRef.child(key).remove().catch(() => {});
+                    }
+                    continue;
+                }
+
+                seenIds.add(u.id);
+
+                if (u.id === user.id) {
+                    activeUsers.push(u);
+                    continue;
+                }
+
+                const peerServerTime = Number(u.lastSeen) || 0;
+                const tracker = this.peerHeartbeatTracker.get(u.id);
+                if (!tracker || tracker.lastSeenVal !== peerServerTime) {
+                    this.peerHeartbeatTracker.set(u.id, {
+                        lastSeenVal: peerServerTime,
+                        observedAt: nowLocal
+                    });
+                }
+
+                const currentTracker = this.peerHeartbeatTracker.get(u.id);
+                const serverDiff = maxServerTime > 0 && peerServerTime > 0 ? (maxServerTime - peerServerTime) : 0;
+                const localUnchangedDiff = currentTracker ? (nowLocal - currentTracker.observedAt) : 0;
+
+                // A peer is stale if their server timestamp is >13s behind current server time,
+                // or if their lastSeen timestamp hasn't updated in >13s of local time
+                const isStale = (peerServerTime === 0) ||
+                                (serverDiff > staleTimeoutMs) ||
+                                (localUnchangedDiff > staleTimeoutMs);
+
+                if (isStale) {
+                    this.peerHeartbeatTracker.delete(u.id);
+                    if (this.roomPresenceRef) {
+                        this.roomPresenceRef.child(key).remove().catch(() => {});
+                    }
+                } else {
+                    activeUsers.push(u);
+                }
+            }
+
+            // Clean tracker for removed IDs
+            for (const trackedId of this.peerHeartbeatTracker.keys()) {
+                if (!seenIds.has(trackedId)) {
+                    this.peerHeartbeatTracker.delete(trackedId);
+                }
+            }
+
+            if (typeof onPresenceUpdate === 'function') {
+                onPresenceUpdate(activeUsers);
+            }
+        };
+
+        this.roomPresenceRef.on('value', (snap) => {
+            this.latestPresenceRaw = snap.val() || {};
+            evaluateActiveUsers(this.latestPresenceRaw);
+        }, (err) => {
+            console.warn('Realtime Database presence listener error:', err.message);
         });
+
+        // Periodic sweep every 4 seconds to evict peers that stopped heartbeating
+        this.presenceSweepTimer = setInterval(() => {
+            evaluateActiveUsers(this.latestPresenceRaw);
+        }, 4000);
+    }
+
+    stopPresenceTimersAndListeners() {
+        if (this.presenceHeartbeatTimer) {
+            clearInterval(this.presenceHeartbeatTimer);
+            this.presenceHeartbeatTimer = null;
+        }
+        if (this.presenceSweepTimer) {
+            clearInterval(this.presenceSweepTimer);
+            this.presenceSweepTimer = null;
+        }
+        if (this.presenceConnectedRef && this.presenceConnectedHandler) {
+            this.presenceConnectedRef.off('value', this.presenceConnectedHandler);
+            this.presenceConnectedHandler = null;
+            this.presenceConnectedRef = null;
+        }
+        if (this.roomPresenceRef) {
+            this.roomPresenceRef.off();
+            this.roomPresenceRef = null;
+        }
+        this.peerHeartbeatTracker.clear();
+        this.latestPresenceRaw = {};
     }
 
     /**
-     * Clears user presence when explicitly leaving the room.
+     * Clears user presence when explicitly leaving the room or unloading the tab.
      */
     clearPresence(roomId, userId) {
         if (this.isSimulated || !this.db) {
@@ -220,12 +410,18 @@ class FirebaseService {
             return;
         }
 
+        this.stopPresenceTimersAndListeners();
+
         if (this.presenceRef) {
-            this.presenceRef.remove();
+            try {
+                this.presenceRef.onDisconnect().cancel().catch(() => {});
+            } catch (e) {}
+            this.presenceRef.remove().catch(() => {});
             this.presenceRef = null;
+        } else if (roomId && userId) {
+            const path = `${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.presencePath}/${userId}`;
+            this.db.ref(path).remove().catch(() => {});
         }
-        const roomPresenceRef = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.presencePath}`);
-        roomPresenceRef.off();
     }
 
     /**
@@ -237,6 +433,10 @@ class FirebaseService {
             return;
         }
 
+        if (this.boardRef) {
+            this.boardRef.off();
+        }
+
         const boardPath = `${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.boardPath}`;
         this.boardRef = this.db.ref(boardPath);
 
@@ -245,6 +445,8 @@ class FirebaseService {
             if (typeof callbacks.onBoardValue === 'function') {
                 callbacks.onBoardValue(data);
             }
+        }, (err) => {
+            console.warn('Realtime Database board listener error:', err.message);
         });
     }
 
@@ -262,41 +464,69 @@ class FirebaseService {
     }
 
     /**
-     * Updates or creates a bubble in Realtime Database.
+     * Writes or updates a complete sanitized bubble in Realtime Database.
      */
     async updateBubble(roomId, bubbleId, bubbleData) {
-        if (this.isSimulated || !this.db) {
-            this.broadcastSimEvent('bubble_update', { roomId, bubbleId, bubbleData });
+        const clean = this.sanitizeBubble(bubbleData, bubbleId);
+        if (!clean) {
+            console.warn('Skipped writing invalid bubble data:', bubbleId, bubbleData);
             return;
         }
-        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.bubblesPath}/${bubbleId}`);
-        await ref.update(bubbleData);
+
+        if (this.isSimulated || !this.db) {
+            this.updateSimStorageBubble(roomId, clean.id, clean);
+            this.broadcastSimEvent('bubble_update', { roomId, bubbleId: clean.id, bubbleData: clean });
+            return;
+        }
+
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.bubblesPath}/${clean.id}`);
+        await ref.set(clean);
     }
 
     /**
-     * Throttled bubble position update in Realtime Database.
+     * Batch updates multiple bubbles in Realtime Database in a single atomic operation.
      */
-    async updateBubblePosition(roomId, bubbleId, x, y) {
+    async batchUpdateBubbles(roomId, bubblesList) {
+        if (!Array.isArray(bubblesList) || bubblesList.length === 0) return;
+
+        const updates = {};
+        const cleanList = [];
+
+        for (const b of bubblesList) {
+            const clean = this.sanitizeBubble(b, b && b.id);
+            if (clean) {
+                updates[clean.id] = clean;
+                cleanList.push(clean);
+            }
+        }
+
+        if (cleanList.length === 0) return;
+
         if (this.isSimulated || !this.db) {
-            this.broadcastSimEvent('bubble_position', { roomId, bubbleId, x, y });
+            for (const clean of cleanList) {
+                this.updateSimStorageBubble(roomId, clean.id, clean);
+                this.broadcastSimEvent('bubble_position', { roomId, bubbleId: clean.id, x: clean.x, y: clean.y, bubbleData: clean });
+            }
             return;
         }
-        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.bubblesPath}/${bubbleId}`);
-        await ref.update({
-            x: Math.round(x * 100) / 100,
-            y: Math.round(y * 100) / 100
-        });
+
+        const bubblesRef = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.bubblesPath}`);
+        await bubblesRef.update(updates);
     }
 
     /**
      * Removes a bubble from Realtime Database.
      */
     async removeBubble(roomId, bubbleId) {
+        if (bubbleId === undefined || bubbleId === null || bubbleId === '') return;
+        const key = String(bubbleId);
+
         if (this.isSimulated || !this.db) {
-            this.broadcastSimEvent('bubble_remove', { roomId, bubbleId });
+            this.removeSimStorageBubble(roomId, key);
+            this.broadcastSimEvent('bubble_remove', { roomId, bubbleId: key });
             return;
         }
-        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.bubblesPath}/${bubbleId}`);
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.bubblesPath}/${key}`);
         await ref.remove();
     }
 
@@ -304,23 +534,34 @@ class FirebaseService {
      * Updates or creates a connection in Realtime Database.
      */
     async updateConnection(roomId, connId, connData) {
-        if (this.isSimulated || !this.db) {
-            this.broadcastSimEvent('conn_update', { roomId, connId, connData });
+        const clean = this.sanitizeConnection(connData, connId);
+        if (!clean) {
+            console.warn('Skipped writing invalid connection data:', connId, connData);
             return;
         }
-        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.connectionsPath}/${connId}`);
-        await ref.set(connData);
+
+        if (this.isSimulated || !this.db) {
+            this.updateSimStorageConn(roomId, clean.id, clean);
+            this.broadcastSimEvent('conn_update', { roomId, connId: clean.id, connData: clean });
+            return;
+        }
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.connectionsPath}/${clean.id}`);
+        await ref.set(clean);
     }
 
     /**
      * Removes a connection from Realtime Database.
      */
     async removeConnection(roomId, connId) {
+        if (connId === undefined || connId === null || connId === '') return;
+        const key = String(connId);
+
         if (this.isSimulated || !this.db) {
-            this.broadcastSimEvent('conn_remove', { roomId, connId });
+            this.removeSimStorageConn(roomId, key);
+            this.broadcastSimEvent('conn_remove', { roomId, connId: key });
             return;
         }
-        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.connectionsPath}/${connId}`);
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.connectionsPath}/${key}`);
         await ref.remove();
     }
 
@@ -328,25 +569,35 @@ class FirebaseService {
      * Completely sets the full board state in Realtime Database.
      */
     async setBoard(roomId, boardData, user = null) {
-        // Convert arrays to objects keyed by id for Realtime Database
         const bubblesMap = {};
-        if (Array.isArray(boardData.bubbles)) {
-            boardData.bubbles.forEach(b => {
-                bubblesMap[b.id] = b;
-            });
-        }
+        const rawBubbles = boardData && boardData.bubbles
+            ? (Array.isArray(boardData.bubbles) ? boardData.bubbles : Object.values(boardData.bubbles))
+            : [];
+
+        rawBubbles.forEach(b => {
+            const clean = this.sanitizeBubble(b, b && b.id);
+            if (clean) {
+                bubblesMap[clean.id] = clean;
+            }
+        });
 
         const connectionsMap = {};
-        if (Array.isArray(boardData.connections)) {
-            boardData.connections.forEach(c => {
-                connectionsMap[c.id] = c;
-            });
-        }
+        const rawConns = boardData && boardData.connections
+            ? (Array.isArray(boardData.connections) ? boardData.connections : Object.values(boardData.connections))
+            : [];
+
+        rawConns.forEach(c => {
+            const clean = this.sanitizeConnection(c, c && c.id);
+            if (clean && bubblesMap[clean.fromId] && bubblesMap[clean.toId]) {
+                connectionsMap[clean.id] = clean;
+            }
+        });
 
         const payload = {
             bubbles: bubblesMap,
             connections: connectionsMap,
-            noiseConfig: boardData.noiseConfig || null,
+            noiseConfig: (boardData && (boardData.noiseConfig || boardData.noiseData)) || null,
+            isCleared: Object.keys(bubblesMap).length === 0,
             updatedAt: this.db ? window.firebase.database.ServerValue.TIMESTAMP : Date.now(),
             updatedBy: user ? user.name : 'System'
         };
@@ -362,16 +613,29 @@ class FirebaseService {
     }
 
     /**
-     * Resets the shared board in Realtime Database.
+     * Resets the shared board in Realtime Database while leaving a valid board marker.
      */
-    async clearBoard(roomId) {
+    async clearBoard(roomId, user = null) {
+        const payload = {
+            bubbles: null,
+            connections: null,
+            isCleared: true,
+            updatedAt: this.db ? window.firebase.database.ServerValue.TIMESTAMP : Date.now(),
+            updatedBy: user ? user.name : 'System'
+        };
+
         if (this.isSimulated || !this.db) {
-            localStorage.removeItem(`inbetween_sim_board_${roomId}`);
+            localStorage.setItem(`inbetween_sim_board_${roomId}`, JSON.stringify({
+                bubbles: {},
+                connections: {},
+                isCleared: true,
+                updatedAt: Date.now()
+            }));
             this.broadcastSimEvent('board_clear', { roomId });
             return;
         }
         const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${this.config.realtimeDb.boardPath}`);
-        await ref.remove();
+        await ref.set(payload);
     }
 
     /**
@@ -397,10 +661,25 @@ class FirebaseService {
 
     /**
      * Archives current board snapshot and records an event in Cloud Firestore.
-     * Invoked exclusively when a user JOINS or LEAVES the online room,
-     * ensuring frequent actions remain in Realtime Database without exhausting Firestore writes.
+     * Invoked exclusively when a user JOINS or LEAVES the online room.
      */
     async saveFirestoreSnapshot(roomId, boardData, actionType, user) {
+        const cleanBubbles = [];
+        if (boardData && Array.isArray(boardData.bubbles)) {
+            boardData.bubbles.forEach(b => {
+                const clean = this.sanitizeBubble(b, b && b.id);
+                if (clean) cleanBubbles.push(clean);
+            });
+        }
+
+        const cleanConnections = [];
+        if (boardData && Array.isArray(boardData.connections)) {
+            boardData.connections.forEach(c => {
+                const clean = this.sanitizeConnection(c, c && c.id);
+                if (clean) cleanConnections.push(clean);
+            });
+        }
+
         const payload = {
             roomId: roomId,
             roomName: (this.config && this.config.roomName) || 'Global Room',
@@ -411,17 +690,16 @@ class FirebaseService {
                 color: user ? user.color : '#ffffff'
             },
             updatedAt: (window.firebase && window.firebase.firestore) ? window.firebase.firestore.FieldValue.serverTimestamp() : new Date().toISOString(),
-            bubbleCount: (boardData && boardData.bubbles) ? boardData.bubbles.length : 0,
-            connectionCount: (boardData && boardData.connections) ? boardData.connections.length : 0,
+            bubbleCount: cleanBubbles.length,
+            connectionCount: cleanConnections.length,
             board: {
-                bubbles: (boardData && boardData.bubbles) ? boardData.bubbles : [],
-                connections: (boardData && boardData.connections) ? boardData.connections : [],
-                noiseConfig: (boardData && boardData.noiseConfig) ? boardData.noiseConfig : null
+                bubbles: cleanBubbles,
+                connections: cleanConnections,
+                noiseConfig: (boardData && (boardData.noiseConfig || boardData.noiseData)) ? (boardData.noiseConfig || boardData.noiseData) : null
             }
         };
 
         if (this.isSimulated || !this.firestore) {
-            // Persist to local simulation log
             try {
                 const firestoreKey = `inbetween_sim_firestore_${roomId}`;
                 const historyKey = `inbetween_sim_firestore_history_${roomId}`;
@@ -447,10 +725,8 @@ class FirebaseService {
         try {
             const roomDocRef = this.firestore.collection(this.config.firestore.roomsCollection).doc(roomId);
 
-            // 1. Update the main room document with latest snapshot
             await roomDocRef.set(payload, { merge: true });
 
-            // 2. Add an audit entry in the session_events subcollection
             await roomDocRef.collection(this.config.firestore.eventsSubcollection).add({
                 eventType: actionType,
                 userId: user ? user.id : 'unknown',
@@ -495,13 +771,58 @@ class FirebaseService {
        Multi-Tab Local Simulator (BroadcastChannel + LocalStorage)
        ================================================================== */
 
+    updateSimStorageBubble(roomId, id, cleanBubble) {
+        try {
+            const key = `inbetween_sim_board_${roomId}`;
+            const raw = localStorage.getItem(key);
+            const board = raw ? JSON.parse(raw) : { bubbles: {}, connections: {} };
+            if (!board.bubbles) board.bubbles = {};
+            board.bubbles[id] = cleanBubble;
+            board.isCleared = false;
+            localStorage.setItem(key, JSON.stringify(board));
+        } catch (e) {}
+    }
+
+    removeSimStorageBubble(roomId, id) {
+        try {
+            const key = `inbetween_sim_board_${roomId}`;
+            const raw = localStorage.getItem(key);
+            if (!raw) return;
+            const board = JSON.parse(raw);
+            if (board.bubbles) delete board.bubbles[id];
+            localStorage.setItem(key, JSON.stringify(board));
+        } catch (e) {}
+    }
+
+    updateSimStorageConn(roomId, id, cleanConn) {
+        try {
+            const key = `inbetween_sim_board_${roomId}`;
+            const raw = localStorage.getItem(key);
+            const board = raw ? JSON.parse(raw) : { bubbles: {}, connections: {} };
+            if (!board.connections) board.connections = {};
+            board.connections[id] = cleanConn;
+            localStorage.setItem(key, JSON.stringify(board));
+        } catch (e) {}
+    }
+
+    removeSimStorageConn(roomId, id) {
+        try {
+            const key = `inbetween_sim_board_${roomId}`;
+            const raw = localStorage.getItem(key);
+            if (!raw) return;
+            const board = JSON.parse(raw);
+            if (board.connections) delete board.connections[id];
+            localStorage.setItem(key, JSON.stringify(board));
+        } catch (e) {}
+    }
+
     setupSimulatedPresence(roomId, user, onPresenceUpdate) {
         const presKey = `inbetween_sim_presence_${roomId}`;
         const registerPresence = () => {
             try {
                 const raw = localStorage.getItem(presKey);
                 const list = raw ? JSON.parse(raw) : [];
-                const filtered = list.filter(u => u.id !== user.id && (Date.now() - u.lastSeen < 20000));
+                const filtered = list.filter(u => u && u.id && u.id !== user.id && (Date.now() - u.lastSeen < 12000));
                 filtered.push({
                     id: user.id,
                     name: user.name,
@@ -516,14 +837,18 @@ class FirebaseService {
         };
 
         registerPresence();
-        this.simHeartbeat = setInterval(registerPresence, 5000);
+        if (this.simHeartbeat) clearInterval(this.simHeartbeat);
+        this.simHeartbeat = setInterval(registerPresence, 4000);
 
         if (this.simBroadcast) {
             this.simBroadcast.addEventListener('message', (e) => {
                 if (e.data && e.data.type === 'presence_ping' && typeof onPresenceUpdate === 'function') {
                     try {
                         const raw = localStorage.getItem(presKey);
-                        if (raw) onPresenceUpdate(JSON.parse(raw));
+                        if (raw) {
+                            const list = JSON.parse(raw).filter(u => u && u.id && (Date.now() - u.lastSeen < 12000));
+                            onPresenceUpdate(list);
+                        }
                     } catch (err) {}
                 }
             });
@@ -540,7 +865,7 @@ class FirebaseService {
             const presKey = `inbetween_sim_presence_${roomId}`;
             const raw = localStorage.getItem(presKey);
             if (raw) {
-                const list = JSON.parse(raw).filter(u => u.id !== userId);
+                const list = JSON.parse(raw).filter(u => u && u.id !== userId);
                 localStorage.setItem(presKey, JSON.stringify(list));
             }
             if (this.simBroadcast) {
@@ -558,9 +883,9 @@ class FirebaseService {
             if (type === 'board_set' && typeof callbacks.onBoardValue === 'function') {
                 callbacks.onBoardValue(payload.payload);
             } else if (type === 'board_clear' && typeof callbacks.onBoardValue === 'function') {
-                callbacks.onBoardValue({ bubbles: {}, connections: {} });
+                callbacks.onBoardValue({ bubbles: {}, connections: {}, isCleared: true });
             } else if (type === 'bubble_position' && typeof callbacks.onBubblePosition === 'function') {
-                callbacks.onBubblePosition(payload.bubbleId, payload.x, payload.y);
+                callbacks.onBubblePosition(payload.bubbleId, payload.x, payload.y, payload.bubbleData);
             } else if (type === 'bubble_update' && typeof callbacks.onBubbleUpdate === 'function') {
                 callbacks.onBubbleUpdate(payload.bubbleId, payload.bubbleData);
             } else if (type === 'bubble_remove' && typeof callbacks.onBubbleRemove === 'function') {

@@ -174,35 +174,57 @@ class ConnectionManager {
     }
 
     /**
+     * Recalculates nextId from current connections so it is always a valid positive integer.
+     */
+    syncNextId() {
+        let maxId = 0;
+        for (const c of this.connections) {
+            const num = Number(c.id);
+            if (Number.isFinite(num) && num > maxId) {
+                maxId = Math.floor(num);
+            }
+        }
+        this.nextId = maxId + 1;
+        return this.nextId;
+    }
+
+    /**
      * Check if a directed connection already exists from source to target
      */
     hasConnection(fromId, toId) {
-        return this.connections.some(c => c.fromId === fromId && c.toId === toId);
+        const fId = Number(fromId);
+        const tId = Number(toId);
+        return this.connections.some(c => Number(c.fromId) === fId && Number(c.toId) === tId);
     }
 
     /**
      * Creates a new directed connection with a default name if not provided
      */
     createConnection(fromId, toId, name = '', customId = null) {
-        if (fromId === toId && !this.config.allowSelfConnection) return null;
-        if (this.hasConnection(fromId, toId)) return null;
+        const fId = Number(fromId);
+        const tId = Number(toId);
+        if (!Number.isFinite(fId) || !Number.isFinite(tId)) return null;
+        if (fId === tId && !this.config.allowSelfConnection) return null;
+        if (this.hasConnection(fId, tId)) return null;
 
-        const id = customId !== null ? Number(customId) : this.nextId++;
-        if (customId !== null) {
-            this.nextId = Math.max(this.nextId, id + 1);
-        }
+        const hasValidCustomId = customId !== null && customId !== undefined && customId !== '' && Number.isFinite(Number(customId)) && Number(customId) > 0;
+        this.syncNextId();
+        const id = hasValidCustomId ? Math.floor(Number(customId)) : this.nextId;
 
         const defaultName = `Connection ${id}`;
-        const connName = (name && typeof name === 'string' && name.trim().length > 0) ? name.trim() : defaultName;
+        const connName = (name && typeof name === 'string' && name.trim().length > 0 && !name.includes('NaN'))
+            ? name.trim()
+            : defaultName;
 
         const connection = {
             id,
-            fromId,
-            toId,
+            fromId: fId,
+            toId: tId,
             name: connName
         };
 
         this.connections.push(connection);
+        this.syncNextId();
         this.render();
 
         if (this.onlineManager && this.onlineManager.isOnline) {
@@ -232,12 +254,14 @@ class ConnectionManager {
      * Delete a connection
      */
     removeConnection(id) {
-        const index = this.connections.findIndex(c => c.id === Number(id));
+        const targetId = Number(id);
+        const index = this.connections.findIndex(c => c.id === targetId || (Number.isNaN(targetId) && Number.isNaN(c.id)));
         if (index !== -1) {
             this.connections.splice(index, 1);
+            this.syncNextId();
             this.render();
             if (this.onlineManager && this.onlineManager.isOnline) {
-                this.onlineManager.onConnectionRemoved(id);
+                this.onlineManager.onConnectionRemoved(targetId);
             }
             return true;
         }
@@ -248,10 +272,15 @@ class ConnectionManager {
      * Remove all connections attached to a bubble (called when bubble is deleted)
      */
     removeConnectionsForBubble(bubbleId) {
-        const before = this.connections.length;
-        this.connections = this.connections.filter(c => c.fromId !== bubbleId && c.toId !== bubbleId);
-        if (this.connections.length !== before) {
+        const targetId = Number(bubbleId);
+        const removed = this.connections.filter(c => Number(c.fromId) === targetId || Number(c.toId) === targetId);
+        if (removed.length > 0) {
+            this.connections = this.connections.filter(c => Number(c.fromId) !== targetId && Number(c.toId) !== targetId);
+            this.syncNextId();
             this.render();
+            if (this.onlineManager && this.onlineManager.isOnline) {
+                removed.forEach(c => this.onlineManager.onConnectionRemoved(c.id));
+            }
         }
     }
 
@@ -260,12 +289,15 @@ class ConnectionManager {
      */
     reset() {
         this.connections = [];
+        this.nextId = 1;
         this.cancelConnecting();
         this.render();
     }
 
     getConnectionById(id) {
-        return this.connections.find(c => c.id === Number(id));
+        const numId = Number(id);
+        if (!Number.isFinite(numId)) return undefined;
+        return this.connections.find(c => c.id === numId);
     }
 
     /**

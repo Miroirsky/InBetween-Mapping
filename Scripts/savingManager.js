@@ -265,21 +265,25 @@ class SavingManager {
      * Serializes current board elements (bubbles, connections, noiseConfig).
      */
     serializeCurrentState() {
-        const bubbles = this.bubbleManager.bubbles.map(b => ({
-            id: b.id,
-            name: b.name,
-            color: b.color,
-            x: Math.round(b.x * 100) / 100,
-            y: Math.round(b.y * 100) / 100,
-            isLocked: !!b.isLocked
-        }));
+        const bubbles = this.bubbleManager.bubbles
+            .filter(b => b && Number.isFinite(Number(b.id)) && Number(b.id) > 0 && Number.isFinite(Number(b.x)) && Number.isFinite(Number(b.y)))
+            .map(b => ({
+                id: Math.floor(Number(b.id)),
+                name: b.name || `Universe ${Math.floor(Number(b.id))}`,
+                color: b.color || '#000000',
+                x: Math.round(b.x * 100) / 100,
+                y: Math.round(b.y * 100) / 100,
+                isLocked: !!b.isLocked
+            }));
 
-        const connections = (this.connectionManager ? this.connectionManager.connections : []).map(c => ({
-            id: c.id,
-            fromId: c.fromId,
-            toId: c.toId,
-            name: c.name
-        }));
+        const connections = (this.connectionManager ? this.connectionManager.connections : [])
+            .filter(c => c && Number.isFinite(Number(c.id)) && Number.isFinite(Number(c.fromId)) && Number.isFinite(Number(c.toId)))
+            .map(c => ({
+                id: Math.floor(Number(c.id)),
+                fromId: Math.floor(Number(c.fromId)),
+                toId: Math.floor(Number(c.toId)),
+                name: c.name || `Connection ${Math.floor(Number(c.id))}`
+            }));
 
         const noiseData = this.noiseConfig ? {
             noiseSize: this.noiseConfig.noiseSize,

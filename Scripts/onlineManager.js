@@ -23,14 +23,16 @@ class OnlineManager {
         this.isApplyingRemote = false;
         this.localBoardBackup = null;
 
-        // User Identity
+        // User Identity (unique session ID per tab, shared name/color preference)
         this.user = this.initUserIdentity();
         this.onlineUsers = [];
 
-        // Drag throttling
+        // Drag & Physics Sync Tracking
         this.dragThrottleTimer = null;
         this.lastDragTimestamp = 0;
-        this.pendingDragUpdates = new Map(); // bubbleId -> { x, y }
+        this.lastLocalActionAt = 0;
+        this.physicsSyncTimer = null;
+        this.pendingDragUpdates = new Map(); // bubbleId -> bubble
 
         // Window & UI Elements
         this.window = null;
@@ -42,50 +44,68 @@ class OnlineManager {
 
         this.initWindow();
         this.initFirebaseService();
+        this.bindLifecycleEvents();
+        this.recoverSoloBackupIfLeftUncleanly();
     }
 
     /**
-     * Initializes or loads persisted user profile.
+     * Initializes user identity:
+     * - Name & color are persisted in localStorage.
+     * - Session ID is stored in sessionStorage so multiple tabs in the same browser
+     *   act as distinct peers and never collide.
      */
     initUserIdentity() {
-        const key = (this.config && this.config.userProfileStorageKey) || 'inbetween_mapping_user_profile';
+        const profileKey = (this.config && this.config.userProfileStorageKey) || 'inbetween_mapping_user_profile';
+        const sessionKey = `${profileKey}_tab_session_id`;
+
+        let tabUserId = null;
         try {
-            const raw = localStorage.getItem(key);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed && parsed.id && parsed.name) {
-                    return parsed;
-                }
+            tabUserId = sessionStorage.getItem(sessionKey);
+            if (!tabUserId) {
+                tabUserId = `user_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
+                sessionStorage.setItem(sessionKey, tabUserId);
             }
-        } catch (e) {}
+        } catch (e) {
+            tabUserId = `user_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
+        }
 
         const colors = ['#38bdf8', '#4ade80', '#fbbf24', '#f87171', '#c084fc', '#fb923c', '#2dd4bf'];
         const randomColor = colors[Math.floor(Math.random() * colors.length)];
         const randomNum = Math.floor(100 + Math.random() * 900);
 
-        const newUser = {
-            id: `user_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
-            name: `Explorer ${randomNum}`,
-            color: randomColor
-        };
+        let savedName = `Explorer ${randomNum}`;
+        let savedColor = randomColor;
 
         try {
-            localStorage.setItem(key, JSON.stringify(newUser));
+            const raw = localStorage.getItem(profileKey);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && parsed.name) savedName = parsed.name;
+                if (parsed && parsed.color) savedColor = parsed.color;
+            } else {
+                localStorage.setItem(profileKey, JSON.stringify({ name: savedName, color: savedColor }));
+            }
         } catch (e) {}
 
-        return newUser;
+        return {
+            id: tabUserId,
+            name: savedName,
+            color: savedColor
+        };
     }
 
     saveUserIdentity(name, color) {
         if (name && name.trim()) this.user.name = name.trim();
         if (color) this.user.color = color;
 
-        const key = (this.config && this.config.userProfileStorageKey) || 'inbetween_mapping_user_profile';
+        const profileKey = (this.config && this.config.userProfileStorageKey) || 'inbetween_mapping_user_profile';
         try {
-            localStorage.setItem(key, JSON.stringify(this.user));
+            localStorage.setItem(profileKey, JSON.stringify({
+                name: this.user.name,
+                color: this.user.color
+            }));
         } catch (e) {}
 
-        // If online, update presence
         if (this.isOnline) {
             this.firebaseService.setupPresence(this.roomId, this.user, (users) => this.onPresenceUpdated(users));
         }
@@ -95,6 +115,97 @@ class OnlineManager {
         this.firebaseService.onStatusChange((status) => {
             this.updateStatusUI(status);
         });
+    }
+
+    /**
+     * Ensures presence is immediately cleaned up if the user closes or refreshes the tab.
+     */
+    bindLifecycleEvents() {
+        const handleUnload = () => {
+            if (this.isOnline) {
+                this.firebaseService.clearPresence(this.roomId, this.user.id);
+                this.firebaseService.stopListeningToBoard(this.roomId);
+            }
+        };
+
+        window.addEventListener('pagehide', handleUnload);
+        window.addEventListener('beforeunload', handleUnload);
+    }
+
+    /**
+     * Sanitizes any corrupted NaN bubbles that might have been stored in local session previously.
+     */
+    recoverSoloBackupIfLeftUncleanly() {
+        if (!this.bubbleManager) return;
+        const badBubbles = this.bubbleManager.bubbles.filter(b => !Number.isFinite(Number(b.id)) || Number(b.id) <= 0);
+        if (badBubbles.length > 0) {
+            badBubbles.forEach(b => {
+                if (b.element && b.element.parentNode) {
+                    b.element.parentNode.removeChild(b.element);
+                }
+            });
+            this.bubbleManager.bubbles = this.bubbleManager.bubbles.filter(b => Number.isFinite(Number(b.id)) && Number(b.id) > 0);
+            this.bubbleManager.syncNextId();
+        }
+    }
+
+    /**
+     * Serializes a bubble into a clean, NaN-free payload for Firebase.
+     */
+    serializeBubbleForSync(bubble) {
+        if (!bubble) return null;
+        return this.firebaseService.sanitizeBubble({
+            id: bubble.id,
+            name: bubble.name,
+            color: bubble.color,
+            x: bubble.x,
+            y: bubble.y,
+            isLocked: !!bubble.isLocked,
+            updatedBy: this.user.id,
+            updatedAt: Date.now()
+        }, bubble.id);
+    }
+
+    isLocalDragging() {
+        return this.bubbleManager.bubbles.some(b => b.isDragging);
+    }
+
+    startPhysicsSyncLoop() {
+        this.stopPhysicsSyncLoop();
+        this.physicsSyncTimer = setInterval(() => {
+            if (!this.isOnline || this.isApplyingRemote) return;
+
+            const now = Date.now();
+            const isActivelyInteracting = this.isLocalDragging() || (now - this.lastLocalActionAt < 1200);
+            if (!isActivelyInteracting) return;
+
+            const movedBubbles = [];
+            for (const b of this.bubbleManager.bubbles) {
+                if (!Number.isFinite(Number(b.id)) || Number(b.id) <= 0) continue;
+                const lastX = b._lastSyncedX !== undefined ? b._lastSyncedX : b.x;
+                const lastY = b._lastSyncedY !== undefined ? b._lastSyncedY : b.y;
+                const dist = Math.hypot(b.x - lastX, b.y - lastY);
+
+                if (dist > 0.5) {
+                    b._lastSyncedX = b.x;
+                    b._lastSyncedY = b.y;
+                    b._lastLocalEditAt = now;
+                    const clean = this.serializeBubbleForSync(b);
+                    if (clean) movedBubbles.push(clean);
+                }
+            }
+
+            if (movedBubbles.length > 0) {
+                this.firebaseService.batchUpdateBubbles(this.roomId, movedBubbles);
+            }
+        }, 70);
+    }
+
+    stopPhysicsSyncLoop() {
+        if (this.physicsSyncTimer) {
+            clearInterval(this.physicsSyncTimer);
+            this.physicsSyncTimer = null;
+        }
     }
 
     /* ==================================================================
@@ -134,30 +245,36 @@ class OnlineManager {
         }
 
         this.isOnline = true;
+        this.pendingDragUpdates.clear();
 
         // 3. Setup presence in Realtime Database
         this.firebaseService.setupPresence(this.roomId, this.user, (users) => {
             this.onPresenceUpdated(users);
         });
 
-        // 4. Fetch current room board or initialize it
+        // 4. Fetch current room board or initialize it cleanly
         try {
             const remoteBoard = await this.firebaseService.fetchCurrentBoard(this.roomId);
 
-            if (remoteBoard && remoteBoard.bubbles) {
-                // Room has existing board in Realtime Database -> load it
+            if (remoteBoard && (remoteBoard.bubbles || remoteBoard.isCleared || remoteBoard.updatedAt)) {
+                // Room exists in Realtime Database -> load & sanitize it
+                await this.purgeCorruptedRemoteNodes(remoteBoard);
                 this.loadRoomBoardIntoCanvas(remoteBoard);
             } else {
                 // Check if Cloud Firestore has an archived snapshot
                 const firestoreDoc = await this.firebaseService.getFirestoreSnapshot(this.roomId);
-                if (firestoreDoc && firestoreDoc.board && firestoreDoc.board.bubbles && firestoreDoc.board.bubbles.length > 0) {
-                    // Restore board from Firestore archive into Realtime Database
+                if (firestoreDoc && firestoreDoc.board) {
                     await this.firebaseService.setBoard(this.roomId, firestoreDoc.board, this.user);
                     this.loadRoomBoardIntoCanvas(firestoreDoc.board);
                 } else {
-                    // Brand new room -> initialize Realtime Database with current board snapshot
-                    const initialBoard = this.savingManager.serializeCurrentState();
-                    await this.firebaseService.setBoard(this.roomId, initialBoard, this.user);
+                    // Brand new room -> start clean online board
+                    const emptyOnlineBoard = {
+                        bubbles: [],
+                        connections: [],
+                        noiseConfig: this.savingManager.serializeCurrentState().noiseData
+                    };
+                    this.loadRoomBoardIntoCanvas(emptyOnlineBoard);
+                    await this.firebaseService.setBoard(this.roomId, emptyOnlineBoard, this.user);
                 }
             }
         } catch (err) {
@@ -167,12 +284,15 @@ class OnlineManager {
         // 5. Attach live Realtime Database listeners
         this.firebaseService.listenToBoard(this.roomId, {
             onBoardValue: (data) => this.onRemoteBoardValue(data),
-            onBubblePosition: (id, x, y) => this.onRemoteBubblePosition(id, x, y),
+            onBubblePosition: (id, x, y, bubbleData) => this.onRemoteBubblePosition(id, x, y, bubbleData),
             onBubbleUpdate: (id, data) => this.onRemoteBubbleUpdate(id, data),
             onBubbleRemove: (id) => this.onRemoteBubbleRemove(id),
             onConnUpdate: (id, data) => this.onRemoteConnUpdate(id, data),
             onConnRemove: (id) => this.onRemoteConnRemove(id)
         });
+
+        // Start physics position sync loop
+        this.startPhysicsSyncLoop();
 
         // 6. Save in Cloud Firestore when joining (as requested)
         const currentBoardState = this.savingManager.serializeCurrentState();
@@ -197,6 +317,33 @@ class OnlineManager {
     }
 
     /**
+     * Purges any corrupted / NaN keys that may exist in Realtime Database from prior errors.
+     */
+    async purgeCorruptedRemoteNodes(boardData) {
+        if (!boardData || typeof boardData !== 'object') return;
+
+        if (boardData.bubbles && typeof boardData.bubbles === 'object') {
+            for (const [key, rb] of Object.entries(boardData.bubbles)) {
+                const clean = this.firebaseService.sanitizeBubble(rb, key);
+                if (!clean || key === 'NaN' || key === 'undefined' || String(clean.id) !== String(key)) {
+                    await this.firebaseService.removeBubble(this.roomId, key);
+                    delete boardData.bubbles[key];
+                }
+            }
+        }
+
+        if (boardData.connections && typeof boardData.connections === 'object') {
+            for (const [key, rc] of Object.entries(boardData.connections)) {
+                const clean = this.firebaseService.sanitizeConnection(rc, key);
+                if (!clean || key === 'NaN' || key === 'undefined' || String(clean.id) !== String(key)) {
+                    await this.firebaseService.removeConnection(this.roomId, key);
+                    delete boardData.connections[key];
+                }
+            }
+        }
+    }
+
+    /**
      * Leaves the online room:
      * 1. Saves final room snapshot and leave event in Cloud Firestore.
      * 2. Cleans up presence and detaches Realtime Database listeners.
@@ -206,6 +353,13 @@ class OnlineManager {
         if (!this.isOnline) return;
 
         this.showToast('Leaving Online Room...', 'info');
+        this.stopPhysicsSyncLoop();
+
+        if (this.dragThrottleTimer) {
+            clearTimeout(this.dragThrottleTimer);
+            this.dragThrottleTimer = null;
+        }
+        this.pendingDragUpdates.clear();
 
         // 1. Save in Cloud Firestore when leaving (as requested)
         try {
@@ -258,34 +412,38 @@ class OnlineManager {
         this.isApplyingRemote = true;
 
         try {
-            // Clear current canvas
             this.bubbleManager.clearBoard();
 
             const state = backup.state;
 
-            // Restore bubbles
             if (Array.isArray(state.bubbles)) {
                 state.bubbles.forEach(b => {
-                    this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked);
+                    const clean = this.firebaseService.sanitizeBubble(b, b && b.id);
+                    if (clean) {
+                        this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked);
+                    }
                 });
             }
 
-            // Restore connections
             if (this.connectionManager && Array.isArray(state.connections)) {
                 state.connections.forEach(c => {
-                    this.connectionManager.createConnection(c.fromId, c.toId, c.name, c.id);
+                    const clean = this.firebaseService.sanitizeConnection(c, c && c.id);
+                    if (clean) {
+                        this.connectionManager.createConnection(clean.fromId, clean.toId, clean.name, clean.id);
+                    }
                 });
             }
 
-            // Restore noise config
             if (state.noiseData && this.noiseConfig) {
                 Object.assign(this.noiseConfig, state.noiseData);
             }
 
-            // Restore active board status in savingManager
             if (this.savingManager) {
-                this.savingManager.setActiveBoard(backup.activeBoardId || null, backup.activeBoardName || 'Current Board');
-                // Save session snapshot to localStorage
+                if (backup.activeBoardId || backup.activeBoardName) {
+                    this.savingManager.setActiveBoard(backup.activeBoardId || null, backup.activeBoardName || 'Current Board');
+                } else {
+                    this.savingManager.clearActiveBoard();
+                }
                 this.savingManager.saveSessionSnapshot();
             }
         } finally {
@@ -297,28 +455,41 @@ class OnlineManager {
      * Loads a room board state into the canvas.
      */
     loadRoomBoardIntoCanvas(boardData) {
-        if (!boardData) return;
-
         this.isApplyingRemote = true;
 
         try {
             this.bubbleManager.clearBoard();
 
-            // Convert bubbles object/array
-            const bubbles = Array.isArray(boardData.bubbles) ? boardData.bubbles : (boardData.bubbles ? Object.values(boardData.bubbles) : []);
-            bubbles.forEach(b => {
-                this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked);
+            if (!boardData) return;
+
+            const rawBubbles = boardData.bubbles
+                ? (Array.isArray(boardData.bubbles) ? boardData.bubbles : Object.entries(boardData.bubbles).map(([k, v]) => (v && typeof v === 'object' ? Object.assign({ id: v.id ?? k }, v) : null)))
+                : [];
+
+            rawBubbles.forEach(b => {
+                const clean = this.firebaseService.sanitizeBubble(b, b && b.id);
+                if (clean) {
+                    const created = this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked);
+                    if (created) {
+                        created._lastSyncedX = clean.x;
+                        created._lastSyncedY = clean.y;
+                    }
+                }
             });
 
-            // Convert connections object/array
-            const connections = Array.isArray(boardData.connections) ? boardData.connections : (boardData.connections ? Object.values(boardData.connections) : []);
+            const rawConns = boardData.connections
+                ? (Array.isArray(boardData.connections) ? boardData.connections : Object.entries(boardData.connections).map(([k, v]) => (v && typeof v === 'object' ? Object.assign({ id: v.id ?? k }, v) : null)))
+                : [];
+
             if (this.connectionManager) {
-                connections.forEach(c => {
-                    this.connectionManager.createConnection(c.fromId, c.toId, c.name, c.id);
+                rawConns.forEach(c => {
+                    const clean = this.firebaseService.sanitizeConnection(c, c && c.id);
+                    if (clean && this.bubbleManager.getBubbleById(clean.fromId) && this.bubbleManager.getBubbleById(clean.toId)) {
+                        this.connectionManager.createConnection(clean.fromId, clean.toId, clean.name, clean.id);
+                    }
                 });
             }
 
-            // Noise config if provided
             if (boardData.noiseConfig && this.noiseConfig) {
                 Object.assign(this.noiseConfig, boardData.noiseConfig);
             }
@@ -335,26 +506,46 @@ class OnlineManager {
      * Handles full or partial updates from Realtime Database.
      */
     onRemoteBoardValue(data) {
-        if (!this.isOnline || !data) return;
+        if (!this.isOnline) return;
+
+        // If board node is null/empty (e.g. cleared), treat as empty board
+        const safeData = data || { bubbles: {}, connections: {} };
 
         this.isApplyingRemote = true;
+        const now = Date.now();
 
         try {
             // 1. Synchronize Bubbles
-            const remoteBubblesMap = data.bubbles || {};
-            const remoteBubbleList = Array.isArray(remoteBubblesMap) ? remoteBubblesMap.filter(Boolean) : Object.values(remoteBubblesMap);
-            const remoteIds = new Set(remoteBubbleList.map(b => Number(b.id)));
+            const remoteBubblesMap = safeData.bubbles || {};
+            const validRemoteBubbles = [];
+            const remoteIds = new Set();
+
+            for (const [key, rb] of Object.entries(remoteBubblesMap)) {
+                if (!rb || typeof rb !== 'object') continue;
+                const clean = this.firebaseService.sanitizeBubble(rb, key);
+                if (!clean || key === 'NaN' || key === 'undefined') {
+                    // Auto-heal corrupted entry in Firebase
+                    this.firebaseService.removeBubble(this.roomId, key);
+                    continue;
+                }
+                validRemoteBubbles.push(clean);
+                remoteIds.add(clean.id);
+            }
 
             // Update or create remote bubbles
-            remoteBubbleList.forEach(rb => {
-                const id = Number(rb.id);
+            validRemoteBubbles.forEach(rb => {
+                const id = rb.id;
                 const local = this.bubbleManager.getBubbleById(id);
 
                 if (local) {
-                    // If user is currently dragging this bubble, do not snap position to avoid fighting
-                    if (!local.isDragging) {
+                    const recentlyEditedLocally = (now - (local._lastLocalEditAt || 0) < 400) && (rb.updatedBy === this.user.id);
+                    const beingMovedByLocalPhysics = this.isLocalDragging() && (now - (local._lastLocalEditAt || 0) < 350);
+
+                    if (!local.isDragging && !recentlyEditedLocally && !beingMovedByLocalPhysics) {
                         local.x = rb.x;
                         local.y = rb.y;
+                        local._lastSyncedX = rb.x;
+                        local._lastSyncedY = rb.y;
                         local.vx = 0;
                         local.vy = 0;
                         this.bubbleManager.updateElementPosition(local);
@@ -370,6 +561,8 @@ class OnlineManager {
 
                     if (!!local.isLocked !== !!rb.isLocked) {
                         local.isLocked = !!rb.isLocked;
+                        local.vx = 0;
+                        local.vy = 0;
                         if (local.isLocked) {
                             local.element.classList.add('is-locked');
                         } else {
@@ -377,8 +570,11 @@ class OnlineManager {
                         }
                     }
                 } else {
-                    // Create newly added bubble from peer
-                    this.bubbleManager.createBubble(rb.x, rb.y, rb.name, rb.color, id, rb.isLocked);
+                    const created = this.bubbleManager.createBubble(rb.x, rb.y, rb.name, rb.color, id, rb.isLocked);
+                    if (created) {
+                        created._lastSyncedX = rb.x;
+                        created._lastSyncedY = rb.y;
+                    }
                 }
             });
 
@@ -390,14 +586,27 @@ class OnlineManager {
                 }
             });
 
+            this.bubbleManager.syncNextId();
+
             // 2. Synchronize Connections
             if (this.connectionManager) {
-                const remoteConnsMap = data.connections || {};
-                const remoteConnList = Array.isArray(remoteConnsMap) ? remoteConnsMap.filter(Boolean) : Object.values(remoteConnsMap);
-                const remoteConnIds = new Set(remoteConnList.map(c => Number(c.id)));
+                const remoteConnsMap = safeData.connections || {};
+                const validRemoteConns = [];
+                const remoteConnIds = new Set();
 
-                remoteConnList.forEach(rc => {
-                    const id = Number(rc.id);
+                for (const [key, rc] of Object.entries(remoteConnsMap)) {
+                    if (!rc || typeof rc !== 'object') continue;
+                    const clean = this.firebaseService.sanitizeConnection(rc, key);
+                    if (!clean || key === 'NaN' || key === 'undefined') {
+                        this.firebaseService.removeConnection(this.roomId, key);
+                        continue;
+                    }
+                    validRemoteConns.push(clean);
+                    remoteConnIds.add(clean.id);
+                }
+
+                validRemoteConns.forEach(rc => {
+                    const id = rc.id;
                     const localConn = this.connectionManager.getConnectionById(id);
 
                     if (localConn) {
@@ -405,7 +614,6 @@ class OnlineManager {
                             this.connectionManager.renameConnection(id, rc.name);
                         }
                     } else {
-                        // Check if both bubbles exist before creating connection
                         if (this.bubbleManager.getBubbleById(rc.fromId) && this.bubbleManager.getBubbleById(rc.toId)) {
                             this.connectionManager.createConnection(rc.fromId, rc.toId, rc.name, id);
                         }
@@ -420,6 +628,7 @@ class OnlineManager {
                     }
                 });
 
+                this.connectionManager.syncNextId();
                 this.connectionManager.render();
             }
         } finally {
@@ -429,53 +638,122 @@ class OnlineManager {
         this.renderRoomDetails();
     }
 
-    onRemoteBubblePosition(bubbleId, x, y) {
+    onRemoteBubblePosition(bubbleId, x, y, bubbleData = null) {
         if (!this.isOnline) return;
-        const local = this.bubbleManager.getBubbleById(Number(bubbleId));
-        if (local && !local.isDragging) {
-            local.x = x;
-            local.y = y;
-            local.vx = 0;
-            local.vy = 0;
-            this.bubbleManager.updateElementPosition(local);
-            if (this.connectionManager) {
-                this.connectionManager.render();
+        const id = Number(bubbleId);
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        this.isApplyingRemote = true;
+        try {
+            const local = this.bubbleManager.getBubbleById(id);
+            if (local && !local.isDragging) {
+                if (Number.isFinite(Number(x)) && Number.isFinite(Number(y))) {
+                    local.x = Number(x);
+                    local.y = Number(y);
+                    local._lastSyncedX = local.x;
+                    local._lastSyncedY = local.y;
+                    local.vx = 0;
+                    local.vy = 0;
+                    this.bubbleManager.updateElementPosition(local);
+                }
+                if (this.connectionManager) {
+                    this.connectionManager.render();
+                }
+            } else if (!local && bubbleData) {
+                const clean = this.firebaseService.sanitizeBubble(bubbleData, id);
+                if (clean) {
+                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked);
+                }
             }
+        } finally {
+            this.isApplyingRemote = false;
         }
     }
 
     onRemoteBubbleUpdate(bubbleId, data) {
-        if (!this.isOnline) return;
+        if (!this.isOnline || !data) return;
         const id = Number(bubbleId);
-        const local = this.bubbleManager.getBubbleById(id);
-        if (local) {
-            if (data.name !== undefined) this.bubbleManager.renameBubble(id, data.name);
-            if (data.color !== undefined) this.bubbleManager.setBubbleColor(id, data.color);
-            if (data.isLocked !== undefined && local.isLocked !== !!data.isLocked) {
-                this.bubbleManager.toggleLock(id);
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        this.isApplyingRemote = true;
+        try {
+            const local = this.bubbleManager.getBubbleById(id);
+            if (local) {
+                if (Number.isFinite(Number(data.x)) && Number.isFinite(Number(data.y)) && !local.isDragging) {
+                    local.x = Number(data.x);
+                    local.y = Number(data.y);
+                    local._lastSyncedX = local.x;
+                    local._lastSyncedY = local.y;
+                    this.bubbleManager.updateElementPosition(local);
+                }
+                if (data.name !== undefined && local.name !== data.name) {
+                    this.bubbleManager.renameBubble(id, data.name);
+                }
+                if (data.color !== undefined && local.color !== data.color) {
+                    this.bubbleManager.setBubbleColor(id, data.color);
+                }
+                if (data.isLocked !== undefined && !!local.isLocked !== !!data.isLocked) {
+                    this.bubbleManager.toggleLock(id);
+                }
+            } else {
+                const clean = this.firebaseService.sanitizeBubble(data, id);
+                if (clean) {
+                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked);
+                }
             }
+        } finally {
+            this.isApplyingRemote = false;
         }
+        this.renderRoomDetails();
     }
 
     onRemoteBubbleRemove(bubbleId) {
         if (!this.isOnline) return;
-        this.bubbleManager.removeBubble(Number(bubbleId));
+        const id = Number(bubbleId);
+        if (!Number.isFinite(id)) return;
+
+        this.isApplyingRemote = true;
+        try {
+            this.bubbleManager.removeBubble(id);
+        } finally {
+            this.isApplyingRemote = false;
+        }
+        this.renderRoomDetails();
     }
 
     onRemoteConnUpdate(connId, data) {
-        if (!this.isOnline || !this.connectionManager) return;
+        if (!this.isOnline || !this.connectionManager || !data) return;
         const id = Number(connId);
-        const local = this.connectionManager.getConnectionById(id);
-        if (local) {
-            if (data.name !== undefined) this.connectionManager.renameConnection(id, data.name);
-        } else if (data.fromId && data.toId) {
-            this.connectionManager.createConnection(data.fromId, data.toId, data.name, id);
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        this.isApplyingRemote = true;
+        try {
+            const local = this.connectionManager.getConnectionById(id);
+            if (local) {
+                if (data.name !== undefined && local.name !== data.name) {
+                    this.connectionManager.renameConnection(id, data.name);
+                }
+            } else if (data.fromId && data.toId) {
+                this.connectionManager.createConnection(data.fromId, data.toId, data.name, id);
+            }
+        } finally {
+            this.isApplyingRemote = false;
         }
+        this.renderRoomDetails();
     }
 
     onRemoteConnRemove(connId) {
         if (!this.isOnline || !this.connectionManager) return;
-        this.connectionManager.removeConnection(Number(connId));
+        const id = Number(connId);
+        if (!Number.isFinite(id)) return;
+
+        this.isApplyingRemote = true;
+        try {
+            this.connectionManager.removeConnection(id);
+        } finally {
+            this.isApplyingRemote = false;
+        }
+        this.renderRoomDetails();
     }
 
     onPresenceUpdated(users) {
@@ -492,15 +770,16 @@ class OnlineManager {
      * Broadcasts bubble creation to Realtime Database.
      */
     onBubbleCreated(bubble) {
-        if (!this.isOnline || this.isApplyingRemote) return;
-        this.firebaseService.updateBubble(this.roomId, bubble.id, {
-            id: bubble.id,
-            name: bubble.name,
-            color: bubble.color,
-            x: Math.round(bubble.x * 100) / 100,
-            y: Math.round(bubble.y * 100) / 100,
-            isLocked: !!bubble.isLocked
-        });
+        if (!this.isOnline || this.isApplyingRemote || !bubble) return;
+        this.lastLocalActionAt = Date.now();
+        bubble._lastSyncedX = bubble.x;
+        bubble._lastSyncedY = bubble.y;
+        bubble._lastLocalEditAt = this.lastLocalActionAt;
+
+        const clean = this.serializeBubbleForSync(bubble);
+        if (clean) {
+            this.firebaseService.updateBubble(this.roomId, clean.id, clean);
+        }
         this.renderRoomDetails();
     }
 
@@ -508,12 +787,14 @@ class OnlineManager {
      * Throttled bubble drag position sync.
      */
     onBubbleDrag(bubble) {
-        if (!this.isOnline || this.isApplyingRemote) return;
+        if (!this.isOnline || this.isApplyingRemote || !bubble) return;
 
         const now = Date.now();
-        const throttle = (this.config && this.config.dragThrottleMs) || 50;
+        this.lastLocalActionAt = now;
+        bubble._lastLocalEditAt = now;
 
-        this.pendingDragUpdates.set(bubble.id, { x: bubble.x, y: bubble.y });
+        const throttle = (this.config && this.config.dragThrottleMs) || 50;
+        this.pendingDragUpdates.set(bubble.id, bubble);
 
         if (now - this.lastDragTimestamp >= throttle) {
             this.flushPendingDrags();
@@ -528,53 +809,97 @@ class OnlineManager {
     }
 
     flushPendingDrags() {
-        for (const [id, pos] of this.pendingDragUpdates.entries()) {
-            this.firebaseService.updateBubblePosition(this.roomId, id, pos.x, pos.y);
+        if (!this.isOnline || this.pendingDragUpdates.size === 0) return;
+
+        const batch = [];
+        const now = Date.now();
+
+        for (const [id, bubble] of this.pendingDragUpdates.entries()) {
+            // Ensure bubble still exists on board
+            if (!this.bubbleManager.getBubbleById(id)) continue;
+            bubble._lastSyncedX = bubble.x;
+            bubble._lastSyncedY = bubble.y;
+            bubble._lastLocalEditAt = now;
+            const clean = this.serializeBubbleForSync(bubble);
+            if (clean) batch.push(clean);
         }
         this.pendingDragUpdates.clear();
+
+        if (batch.length > 0) {
+            this.firebaseService.batchUpdateBubbles(this.roomId, batch);
+        }
     }
 
     /**
      * Ensures final position is broadcast on drag release.
      */
     onBubbleDragEnd(bubble) {
-        if (!this.isOnline || this.isApplyingRemote) return;
+        if (!this.isOnline || this.isApplyingRemote || !bubble) return;
+        const now = Date.now();
+        this.lastLocalActionAt = now;
+        bubble._lastLocalEditAt = now;
+
         if (this.dragThrottleTimer) {
             clearTimeout(this.dragThrottleTimer);
             this.dragThrottleTimer = null;
         }
-        this.firebaseService.updateBubblePosition(this.roomId, bubble.id, bubble.x, bubble.y);
+        this.pendingDragUpdates.set(bubble.id, bubble);
+        this.flushPendingDrags();
     }
 
     onBubbleLockChanged(bubble) {
-        if (!this.isOnline || this.isApplyingRemote) return;
-        this.firebaseService.updateBubble(this.roomId, bubble.id, { isLocked: !!bubble.isLocked });
+        if (!this.isOnline || this.isApplyingRemote || !bubble) return;
+        this.lastLocalActionAt = Date.now();
+        bubble._lastLocalEditAt = this.lastLocalActionAt;
+        const clean = this.serializeBubbleForSync(bubble);
+        if (clean) {
+            this.firebaseService.updateBubble(this.roomId, clean.id, clean);
+        }
     }
 
     onBubbleRenamed(bubble) {
-        if (!this.isOnline || this.isApplyingRemote) return;
-        this.firebaseService.updateBubble(this.roomId, bubble.id, { name: bubble.name });
+        if (!this.isOnline || this.isApplyingRemote || !bubble) return;
+        this.lastLocalActionAt = Date.now();
+        bubble._lastLocalEditAt = this.lastLocalActionAt;
+        const clean = this.serializeBubbleForSync(bubble);
+        if (clean) {
+            this.firebaseService.updateBubble(this.roomId, clean.id, clean);
+        }
     }
 
     onBubbleColorChanged(bubble) {
-        if (!this.isOnline || this.isApplyingRemote) return;
-        this.firebaseService.updateBubble(this.roomId, bubble.id, { color: bubble.color });
+        if (!this.isOnline || this.isApplyingRemote || !bubble) return;
+        this.lastLocalActionAt = Date.now();
+        bubble._lastLocalEditAt = this.lastLocalActionAt;
+        const clean = this.serializeBubbleForSync(bubble);
+        if (clean) {
+            this.firebaseService.updateBubble(this.roomId, clean.id, clean);
+        }
     }
 
     onBubbleRemoved(bubbleId) {
         if (!this.isOnline || this.isApplyingRemote) return;
+        this.lastLocalActionAt = Date.now();
+        this.pendingDragUpdates.delete(Number(bubbleId));
         this.firebaseService.removeBubble(this.roomId, bubbleId);
         this.renderRoomDetails();
     }
 
     onBoardReset() {
         if (!this.isOnline || this.isApplyingRemote) return;
-        this.firebaseService.clearBoard(this.roomId);
+        this.lastLocalActionAt = Date.now();
+        if (this.dragThrottleTimer) {
+            clearTimeout(this.dragThrottleTimer);
+            this.dragThrottleTimer = null;
+        }
+        this.pendingDragUpdates.clear();
+        this.firebaseService.clearBoard(this.roomId, this.user);
         this.renderRoomDetails();
     }
 
     onConnectionCreated(conn) {
-        if (!this.isOnline || this.isApplyingRemote) return;
+        if (!this.isOnline || this.isApplyingRemote || !conn) return;
+        this.lastLocalActionAt = Date.now();
         this.firebaseService.updateConnection(this.roomId, conn.id, {
             id: conn.id,
             fromId: conn.fromId,
@@ -585,12 +910,19 @@ class OnlineManager {
     }
 
     onConnectionRenamed(conn) {
-        if (!this.isOnline || this.isApplyingRemote) return;
-        this.firebaseService.updateConnection(this.roomId, conn.id, { name: conn.name });
+        if (!this.isOnline || this.isApplyingRemote || !conn) return;
+        this.lastLocalActionAt = Date.now();
+        this.firebaseService.updateConnection(this.roomId, conn.id, {
+            id: conn.id,
+            fromId: conn.fromId,
+            toId: conn.toId,
+            name: conn.name
+        });
     }
 
     onConnectionRemoved(connId) {
         if (!this.isOnline || this.isApplyingRemote) return;
+        this.lastLocalActionAt = Date.now();
         this.firebaseService.removeConnection(this.roomId, connId);
         this.renderRoomDetails();
     }
@@ -842,16 +1174,21 @@ class OnlineManager {
     saveCustomFirebaseConfig() {
         const body = this.window.getBodyElement();
         const apiKey = body.querySelector('#fb-input-apiKey').value.trim();
-        const databaseURL = body.querySelector('#fb-input-databaseURL').value.trim();
+        let databaseURL = body.querySelector('#fb-input-databaseURL').value.trim();
         const projectId = body.querySelector('#fb-input-projectId').value.trim();
         const authDomain = body.querySelector('#fb-input-authDomain').value.trim();
+
+        if (projectId && !databaseURL) {
+            databaseURL = `https://${projectId}-default-rtdb.firebaseio.com`;
+            body.querySelector('#fb-input-databaseURL').value = databaseURL;
+        }
 
         const custom = {
             apiKey,
             databaseURL,
             projectId,
-            authDomain,
-            storageBucket: `${projectId}.appspot.com`,
+            authDomain: authDomain || (projectId ? `${projectId}.firebaseapp.com` : ''),
+            storageBucket: projectId ? `${projectId}.appspot.com` : '',
             messagingSenderId: '',
             appId: ''
         };
@@ -860,7 +1197,6 @@ class OnlineManager {
         try {
             localStorage.setItem(key, JSON.stringify(custom));
             this.showToast('Firebase credentials saved! Re-initializing...', 'success');
-            // Reset service initialization to pick up new config
             this.firebaseService.isInitialized = false;
             this.firebaseService.initialize();
         } catch (e) {
@@ -910,10 +1246,12 @@ class OnlineManager {
         const countBadge = body.querySelector('#online-peers-count');
         if (!listEl) return;
 
-        const count = Math.max(1, this.onlineUsers.length);
-        if (countBadge) countBadge.textContent = `${count} Online`;
+        // Ensure current user is always visible while online even before server roundtrip
+        const hasSelf = this.onlineUsers.some(u => u && u.id === this.user.id);
+        const displayUsers = hasSelf ? this.onlineUsers : [this.user, ...this.onlineUsers];
+        const count = displayUsers.length;
 
-        const displayUsers = this.onlineUsers.length > 0 ? this.onlineUsers : [this.user];
+        if (countBadge) countBadge.textContent = `${count} Online`;
 
         listEl.innerHTML = displayUsers.map(u => {
             const isMe = u.id === this.user.id;
@@ -967,6 +1305,8 @@ class OnlineManager {
             toggleBtn.className = 'online-primary-btn join';
             toggleText.textContent = 'Join Online Room';
             roomDetails.style.display = 'none';
+            this.onlineUsers = [];
+            this.updateTopBarBadge();
         }
 
         // Top navigation button
@@ -982,6 +1322,7 @@ class OnlineManager {
             if (online) {
                 this.savingManager.activeBoardNameEl.textContent = 'Online Room (Global)';
                 if (this.savingManager.activeBoardWidget) {
+                    this.savingManager.activeBoardWidget.classList.add('is-visible');
                     this.savingManager.activeBoardWidget.classList.add('is-online-active');
                 }
             } else {
@@ -994,8 +1335,9 @@ class OnlineManager {
 
     updateTopBarBadge() {
         if (this.topUserBadge) {
-            const count = this.onlineUsers.length;
-            if (this.isOnline && count > 1) {
+            const hasSelf = this.onlineUsers.some(u => u && u.id === this.user.id);
+            const count = this.isOnline ? (hasSelf ? this.onlineUsers.length : this.onlineUsers.length + 1) : 0;
+            if (this.isOnline && count > 0) {
                 this.topUserBadge.textContent = count;
                 this.topUserBadge.style.display = 'inline-flex';
             } else {
@@ -1005,7 +1347,6 @@ class OnlineManager {
     }
 
     updateStatusUI(status) {
-        // Can be used for connection status notices
         if (status.message) {
             console.info('[FirebaseService]', status.message);
         }
