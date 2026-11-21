@@ -297,6 +297,11 @@ class SavingManager {
      * Saves a snapshot of current session to localStorage to persist across refreshes.
      */
     saveSessionSnapshot() {
+        // In online mode, preserve the local solo session intact and do not overwrite with room state
+        if (this.bubbleManager && this.bubbleManager.onlineManager && this.bubbleManager.onlineManager.isOnline) {
+            return;
+        }
+
         const { bubbles, connections, noiseData } = this.serializeCurrentState();
         const sessionData = {
             activeBoardId: this.activeBoardId,
@@ -428,6 +433,22 @@ class SavingManager {
      * Triggered by clicking "Save" on bottom-left or pressing Ctrl+S.
      */
     updateActiveBoard() {
+        // If in online room mode, save snapshot to Cloud Firestore
+        if (this.bubbleManager && this.bubbleManager.onlineManager && this.bubbleManager.onlineManager.isOnline) {
+            const om = this.bubbleManager.onlineManager;
+            const state = this.serializeCurrentState();
+            om.firebaseService.saveFirestoreSnapshot(om.roomId, state, 'manual_snapshot', om.user);
+            om.lastFirestoreSnapshotInfo = {
+                action: 'manual',
+                timestamp: new Date().toLocaleTimeString(),
+                user: om.user.name
+            };
+            om.updateFirestoreCardUI();
+            this.flashSaveFeedback();
+            this.showFeedback('Archived Room Snapshot to Firestore! ✓', 'success');
+            return true;
+        }
+
         const { bubbles, connections, noiseData } = this.serializeCurrentState();
 
         if (this.activeBoardId) {

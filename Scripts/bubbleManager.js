@@ -11,6 +11,7 @@ class BubbleManager {
         this.config = config;
         this.connectionManager = null;
         this.savingManager = null;
+        this.onlineManager = null;
         this.bubbles = [];
         this.nextId = 1;
 
@@ -28,6 +29,10 @@ class BubbleManager {
 
     setSavingManager(savingManager) {
         this.savingManager = savingManager;
+    }
+
+    setOnlineManager(onlineManager) {
+        this.onlineManager = onlineManager;
     }
 
     /**
@@ -172,6 +177,10 @@ class BubbleManager {
         this.container.appendChild(el);
         this.bubbles.push(bubble);
 
+        if (this.onlineManager && this.onlineManager.isOnline) {
+            this.onlineManager.onBubbleCreated(bubble);
+        }
+
         return bubble;
     }
 
@@ -198,6 +207,9 @@ class BubbleManager {
                 bubble.nameElement.textContent = bubble.name;
                 bubble.nameElement.title = bubble.name;
             }
+            if (this.onlineManager && this.onlineManager.isOnline) {
+                this.onlineManager.onBubbleRenamed(bubble);
+            }
             return true;
         }
         return false;
@@ -211,6 +223,9 @@ class BubbleManager {
         if (bubble && newColor) {
             bubble.color = newColor;
             this.applyBubbleStyle(bubble);
+            if (this.onlineManager && this.onlineManager.isOnline) {
+                this.onlineManager.onBubbleColorChanged(bubble);
+            }
             return true;
         }
         return false;
@@ -235,6 +250,9 @@ class BubbleManager {
                 }
             }, 180);
             this.bubbles.splice(index, 1);
+            if (this.onlineManager && this.onlineManager.isOnline) {
+                this.onlineManager.onBubbleRemoved(id);
+            }
         }
     }
 
@@ -253,6 +271,10 @@ class BubbleManager {
             bubble.element.classList.add('is-locked');
         } else {
             bubble.element.classList.remove('is-locked');
+        }
+
+        if (this.onlineManager && this.onlineManager.isOnline) {
+            this.onlineManager.onBubbleLockChanged(bubble);
         }
     }
 
@@ -273,6 +295,10 @@ class BubbleManager {
             this.container.innerHTML = '';
             this.bubbles = [];
         }, 180);
+
+        if (this.onlineManager && this.onlineManager.isOnline) {
+            this.onlineManager.onBoardReset();
+        }
     }
 
     getBubbleById(id) {

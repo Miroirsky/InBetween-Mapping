@@ -112,6 +112,34 @@ document.addEventListener('DOMContentLoaded', () => {
         viewMenu = new window.ViewMenu(savingManager, paramsManager, interactionManager, exportManager);
     }
 
+    // 7. Firebase & Online Multiplayer Room Setup
+    const firebaseConfig = window.FirebaseConfig;
+    let firebaseService = null;
+    let onlineManager = null;
+
+    if (window.OnlineManager && savingManager) {
+        if (window.FirebaseService) {
+            firebaseService = new window.FirebaseService(firebaseConfig);
+        }
+        onlineManager = new window.OnlineManager(
+            bubbleManager,
+            connectionManager,
+            savingManager,
+            noiseConfig,
+            firebaseService,
+            firebaseConfig
+        );
+
+        bubbleManager.setOnlineManager(onlineManager);
+        if (connectionManager) {
+            connectionManager.setOnlineManager(onlineManager);
+        }
+
+        if (viewMenu) {
+            viewMenu.setOnlineManager(onlineManager);
+        }
+    }
+
     // Expose all modules on window.app for easy debugging or scripting
     window.app = {
         noiseRenderer: renderer,
@@ -128,6 +156,9 @@ document.addEventListener('DOMContentLoaded', () => {
         savingManager,
         exportManager,
         paramsManager,
-        viewMenu
+        viewMenu,
+        firebaseConfig,
+        firebaseService,
+        onlineManager
     };
 });

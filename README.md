@@ -189,3 +189,37 @@ A top-left view navigation menu that launches movable, closable, and reducible g
 - [`Scripts/exportManager.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/exportManager.js): JSON file import/export sharing engine, drag & drop reader, and preview inspector.
 - [`Scripts/paramsManager.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/paramsManager.js): Live noise parameter controls with 10%–1000% scaling.
 - [`Scripts/viewMenu.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/viewMenu.js): Top-left navigation trigger and dropdown menu.
+
+---
+
+## 🌐 Online Multiplayer Room (Firebase Realtime Database & Firestore)
+
+A shared collaborative space powered by Firebase where users can join a single shared room, see and modify the same board in real time, archive snapshots to Cloud Firestore on join/leave, and return to their local solo editor with their board completely intact.
+
+### Core Features & Architecture
+- **Single Shared Room**:
+  - A single online room (`global_room`) that anyone can join or leave.
+  - Leaving returns immediately to the local solo editor.
+- **Realtime Database for Live Modifications**:
+  - Everyone in the room sees the same board and can modify it live.
+  - Bubble creation, movement/dragging (throttled at ~50ms), locking, renaming, coloring, deletion, and connections sync instantly across peers via Firebase Realtime Database.
+  - Fast, low-latency, and fluid multiplayer collaboration without latency spikes.
+- **Firestore Archiving on Join / Leave**:
+  - Continuous canvas interactions are **not** saved to Firestore on every action.
+  - Whenever someone **joins** or **leaves** the room, a full snapshot of the board and a session event are archived to Cloud Firestore (`rooms/global_room` and `rooms/global_room/session_events`).
+- **Local Solo Version Totally Intact**:
+  - Joining the room automatically backs up the active local solo board (universes, connections, active board name, and noise settings).
+  - Leaving the room restores the user's local board setup exactly as it was before joining.
+  - Saved boards in the Saving window remain completely untouched.
+- **Online Menu & Floating Window**:
+  - **Top Navigation Button**: Sleek glassmorphic button with live status indicator (grey for solo, glowing green pulse with connected peer count when online).
+  - **View Menu Entry**: "Online Room" option in the View dropdown menu.
+  - **User Profile**: Customize display name and avatar color with live preview.
+  - **Live Peer List**: See active collaborators in the room in real time.
+  - **Firestore Status Card**: Inspect the last snapshot saved to Firestore and trigger manual snapshots if desired.
+  - **Firebase Configuration Panel**: Collapsible panel to input custom Firebase project credentials (`apiKey`, `databaseURL`, `projectId`, `authDomain`) or edit `Values/firebaseConfig.js`. Includes automatic multi-tab simulation mode when credentials are not yet entered.
+
+### Online & Firebase Files
+- [`Values/firebaseConfig.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Values/firebaseConfig.js): Centralized Firebase options, room constants, paths, throttle rates, and storage keys.
+- [`Scripts/firebaseService.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/firebaseService.js): Firebase Realtime Database live sync, presence tracking, and Cloud Firestore snapshot archiving.
+- [`Scripts/onlineManager.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/onlineManager.js): Online room state management, join/leave lifecycle, local board backup/restoration, and floating window UI.

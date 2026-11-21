@@ -238,6 +238,10 @@ class InteractionManager {
                 this.draggedBubble.vy = 0;
 
                 this.manager.updateElementPosition(this.draggedBubble);
+
+                if (this.manager.onlineManager && this.manager.onlineManager.isOnline) {
+                    this.manager.onlineManager.onBubbleDrag(this.draggedBubble);
+                }
                 return;
             }
 
@@ -250,10 +254,15 @@ class InteractionManager {
         // Mouse up (End bubble drag or background pan)
         window.addEventListener('mouseup', (e) => {
             if (this.draggedBubble) {
-                this.draggedBubble.isDragging = false;
-                this.draggedBubble.element.classList.remove('is-dragging');
+                const bubble = this.draggedBubble;
+                bubble.isDragging = false;
+                bubble.element.classList.remove('is-dragging');
                 document.body.classList.remove('is-dragging-bubble');
                 this.draggedBubble = null;
+
+                if (this.manager.onlineManager && this.manager.onlineManager.isOnline) {
+                    this.manager.onlineManager.onBubbleDragEnd(bubble);
+                }
             }
 
             if (this.isPanning) {

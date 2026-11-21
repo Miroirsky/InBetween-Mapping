@@ -6,19 +6,30 @@
  */
 
 class ViewMenu {
-    constructor(savingManager, paramsManager, interactionManager = null, exportManager = null) {
+    constructor(savingManager, paramsManager, interactionManager = null, exportManager = null, onlineManager = null) {
         this.savingManager = savingManager;
         this.paramsManager = paramsManager;
         this.interactionManager = interactionManager;
         this.exportManager = exportManager;
+        this.onlineManager = onlineManager;
         this.isOpen = false;
 
         this.container = null;
         this.btnTrigger = null;
         this.dropdown = null;
+        this.btnOnline = null;
 
         this.initDOM();
         this.bindEvents();
+    }
+
+    setOnlineManager(onlineManager) {
+        this.onlineManager = onlineManager;
+        if (this.onlineManager && this.btnOnline) {
+            const statusDot = this.btnOnline.querySelector('.online-status-dot');
+            const userBadge = this.btnOnline.querySelector('#online-user-count-badge');
+            this.onlineManager.setTopNavElements(this.btnOnline, statusDot, userBadge);
+        }
     }
 
     setExportManager(exportManager) {
@@ -42,7 +53,30 @@ class ViewMenu {
                     <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
             </button>
+            <button type="button" id="online-menu-btn" class="online-menu-btn" title="Online Room (Multiplayer)">
+                <span class="online-status-dot"></span>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="online-icon">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                </svg>
+                <span class="online-btn-label">Online</span>
+                <span id="online-user-count-badge" class="online-user-count-badge" style="display: none;">1</span>
+            </button>
             <div id="view-menu-dropdown" class="view-menu-dropdown" role="menu">
+                <button type="button" class="view-menu-item" data-action="online" role="menuitem">
+                    <span class="view-item-icon">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="2" y1="12" x2="22" y2="12"></line>
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                        </svg>
+                    </span>
+                    <div class="view-item-text">
+                        <span class="view-item-title">Online Room</span>
+                        <span class="view-item-subtitle">Realtime shared room</span>
+                    </div>
+                </button>
                 <button type="button" class="view-menu-item" data-action="saving" role="menuitem">
                     <span class="view-item-icon">
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -102,6 +136,7 @@ class ViewMenu {
         this.container = container;
         this.btnTrigger = container.querySelector('#view-menu-btn');
         this.dropdown = container.querySelector('#view-menu-dropdown');
+        this.btnOnline = container.querySelector('#online-menu-btn');
     }
 
     bindEvents() {
@@ -111,6 +146,16 @@ class ViewMenu {
             this.toggle();
         });
 
+        // Online Room button click
+        if (this.btnOnline) {
+            this.btnOnline.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.onlineManager) {
+                    this.onlineManager.toggle();
+                }
+            });
+        }
+
         // Menu item click handlers
         const items = this.dropdown.querySelectorAll('.view-menu-item');
         items.forEach(item => {
@@ -119,7 +164,9 @@ class ViewMenu {
                 const action = item.dataset.action;
                 this.close();
 
-                if (action === 'saving' && this.savingManager) {
+                if (action === 'online' && this.onlineManager) {
+                    this.onlineManager.open();
+                } else if (action === 'saving' && this.savingManager) {
                     this.savingManager.open();
                 } else if (action === 'export' && this.exportManager) {
                     this.exportManager.open();

@@ -14,12 +14,17 @@ class ConnectionManager {
         this.connections = []; // [{ id, fromId, toId, name }]
         this.nextId = 1;
         this.hoveredConnectionId = null;
+        this.onlineManager = null;
 
         // Active connection creation state (when user clicks "Add Connection")
         this.pendingSourceId = null;
         this.previewLine = null;
 
         this.initSVG();
+    }
+
+    setOnlineManager(onlineManager) {
+        this.onlineManager = onlineManager;
     }
 
     initSVG() {
@@ -178,11 +183,15 @@ class ConnectionManager {
     /**
      * Creates a new directed connection with a default name if not provided
      */
-    createConnection(fromId, toId, name = '') {
+    createConnection(fromId, toId, name = '', customId = null) {
         if (fromId === toId && !this.config.allowSelfConnection) return null;
         if (this.hasConnection(fromId, toId)) return null;
 
-        const id = this.nextId++;
+        const id = customId !== null ? Number(customId) : this.nextId++;
+        if (customId !== null) {
+            this.nextId = Math.max(this.nextId, id + 1);
+        }
+
         const defaultName = `Connection ${id}`;
         const connName = (name && typeof name === 'string' && name.trim().length > 0) ? name.trim() : defaultName;
 
@@ -195,6 +204,11 @@ class ConnectionManager {
 
         this.connections.push(connection);
         this.render();
+
+        if (this.onlineManager && this.onlineManager.isOnline) {
+            this.onlineManager.onConnectionCreated(connection);
+        }
+
         return connection;
     }
 
@@ -206,6 +220,9 @@ class ConnectionManager {
         if (conn && newName && newName.trim() !== '') {
             conn.name = newName.trim();
             this.render();
+            if (this.onlineManager && this.onlineManager.isOnline) {
+                this.onlineManager.onConnectionRenamed(conn);
+            }
             return true;
         }
         return false;
@@ -219,6 +236,9 @@ class ConnectionManager {
         if (index !== -1) {
             this.connections.splice(index, 1);
             this.render();
+            if (this.onlineManager && this.onlineManager.isOnline) {
+                this.onlineManager.onConnectionRemoved(id);
+            }
             return true;
         }
         return false;
