@@ -43,6 +43,12 @@ const WindowConfig = {
         defaultLeft: 360
     },
 
+    exportWindow: {
+        width: 360,
+        defaultTop: 60,
+        defaultLeft: 360
+    },
+
     /**
      * Base z-index for floating windows
      */

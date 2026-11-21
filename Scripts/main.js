@@ -63,12 +63,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 6. Window System & View Menu Setup
     const windowConfig = window.WindowConfig;
+    const exportConfig = window.ExportConfig;
+
     let paramsManager = null;
     if (window.ParamsManager && noiseConfig) {
         paramsManager = new window.ParamsManager(noiseConfig, windowConfig);
     }
 
     let savingManager = null;
+    let exportManager = null;
+
     if (window.SavingManager) {
         savingManager = new window.SavingManager(
             bubbleManager,
@@ -81,14 +85,31 @@ document.addEventListener('DOMContentLoaded', () => {
         );
         savingManager.setContextMenu(contextMenu);
         bubbleManager.setSavingManager(savingManager);
+    }
 
+    if (window.ExportManager && savingManager) {
+        exportManager = new window.ExportManager(
+            bubbleManager,
+            connectionManager,
+            noiseConfig,
+            savingManager,
+            windowConfig,
+            exportConfig,
+            () => {
+                if (paramsManager) paramsManager.syncFromConfig();
+            }
+        );
+        savingManager.setExportManager(exportManager);
+    }
+
+    if (savingManager) {
         // Auto-restore board state on refresh (or load active board)
         savingManager.initAutoRestore();
     }
 
     let viewMenu = null;
     if (window.ViewMenu && savingManager && paramsManager) {
-        viewMenu = new window.ViewMenu(savingManager, paramsManager, interactionManager);
+        viewMenu = new window.ViewMenu(savingManager, paramsManager, interactionManager, exportManager);
     }
 
     // Expose all modules on window.app for easy debugging or scripting
@@ -103,7 +124,9 @@ document.addEventListener('DOMContentLoaded', () => {
         contextMenu,
         interactionManager,
         windowConfig,
+        exportConfig,
         savingManager,
+        exportManager,
         paramsManager,
         viewMenu
     };

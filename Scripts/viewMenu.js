@@ -6,10 +6,11 @@
  */
 
 class ViewMenu {
-    constructor(savingManager, paramsManager, interactionManager = null) {
+    constructor(savingManager, paramsManager, interactionManager = null, exportManager = null) {
         this.savingManager = savingManager;
         this.paramsManager = paramsManager;
         this.interactionManager = interactionManager;
+        this.exportManager = exportManager;
         this.isOpen = false;
 
         this.container = null;
@@ -18,6 +19,10 @@ class ViewMenu {
 
         this.initDOM();
         this.bindEvents();
+    }
+
+    setExportManager(exportManager) {
+        this.exportManager = exportManager;
     }
 
     initDOM() {
@@ -49,6 +54,19 @@ class ViewMenu {
                     <div class="view-item-text">
                         <span class="view-item-title">Saving</span>
                         <span class="view-item-subtitle">Manage saved boards</span>
+                    </div>
+                </button>
+                <button type="button" class="view-menu-item" data-action="export" role="menuitem">
+                    <span class="view-item-icon">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </span>
+                    <div class="view-item-text">
+                        <span class="view-item-title">Export / Import</span>
+                        <span class="view-item-subtitle">Share boards as files</span>
                     </div>
                 </button>
                 <button type="button" class="view-menu-item" data-action="params" role="menuitem">
@@ -103,6 +121,8 @@ class ViewMenu {
 
                 if (action === 'saving' && this.savingManager) {
                     this.savingManager.open();
+                } else if (action === 'export' && this.exportManager) {
+                    this.exportManager.open();
                 } else if (action === 'params' && this.paramsManager) {
                     this.paramsManager.open();
                 } else if (action === 'reset-view' && this.interactionManager) {

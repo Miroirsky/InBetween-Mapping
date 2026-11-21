@@ -21,6 +21,7 @@ class SavingManager {
         this.activeBoardId = null;
         this.activeBoardName = null;
         this.contextMenu = null;
+        this.exportManager = null;
 
         this.window = null;
         this.activeBoardWidget = null;
@@ -39,6 +40,10 @@ class SavingManager {
 
     setContextMenu(contextMenu) {
         this.contextMenu = contextMenu;
+    }
+
+    setExportManager(exportManager) {
+        this.exportManager = exportManager;
     }
 
     /**
@@ -115,7 +120,17 @@ class SavingManager {
                     <div class="saving-divider"></div>
                     <div class="saved-boards-header-row">
                         <span class="saved-boards-title">Saved List</span>
-                        <span id="saved-boards-count" class="saved-boards-count">0 boards</span>
+                        <div class="saved-header-meta">
+                            <button type="button" id="btn-saving-open-export" class="saved-header-link" title="Open Export & Import Window">
+                                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                                <span>Export / Import</span>
+                            </button>
+                            <span id="saved-boards-count" class="saved-boards-count">0 boards</span>
+                        </div>
                     </div>
                     <div id="saved-boards-list" class="saved-boards-list"></div>
                 </div>
@@ -220,6 +235,15 @@ class SavingManager {
                 handleSave();
             }
         });
+
+        const openExportBtn = body.querySelector('#btn-saving-open-export');
+        if (openExportBtn) {
+            openExportBtn.addEventListener('click', () => {
+                if (this.exportManager) {
+                    this.exportManager.open();
+                }
+            });
+        }
     }
 
     bindGlobalShortcuts() {
@@ -632,6 +656,13 @@ class SavingManager {
                             <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
                         </svg>
                     </button>
+                    <button type="button" class="board-action-btn btn-export" title="Export this board as a .json file">
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </button>
                     <button type="button" class="board-action-btn btn-delete" title="Delete this saved board">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="3 6 5 6 21 6"></polyline>
@@ -649,6 +680,34 @@ class SavingManager {
                 e.stopPropagation();
                 this.promptRenameBoard(record.id);
             });
+
+            const exportBtn = card.querySelector('.btn-export');
+            if (exportBtn) {
+                exportBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (this.exportManager) {
+                        this.exportManager.exportSavedBoardRecord(record);
+                    } else {
+                        // Direct download fallback
+                        const payload = {
+                            app: 'InBetween Mapping',
+                            version: '1.0',
+                            type: 'board',
+                            exportedAt: new Date().toISOString(),
+                            board: record
+                        };
+                        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${(record.name || 'board').toLowerCase().replace(/[^a-z0-9_\-\s]/g, '').replace(/\s+/g, '-')}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }
+                });
+            }
 
             const cardNameEl = card.querySelector('.board-card-name');
             if (cardNameEl) {

@@ -139,7 +139,17 @@ A top-left view navigation menu that launches movable, closable, and reducible g
     - Save current board setups with custom or auto-generated names to browser `localStorage`.
     - View all saved boards with creation dates, universe counts, and connection counts.
     - Open / load any saved board instantly.
+    - Quick-export any saved board directly as a `.json` file.
     - Delete unwanted saved boards.
+  - **Export / Import**: Opens the file sharing and backup window.
+    - **Export Current Canvas**: Download the active board as a formatted `.json` file or copy its raw JSON payload directly to the clipboard.
+    - **Export from Saves**: Select any saved board from `localStorage` and download it individually.
+    - **Full Backup Archive**: Download all saved boards in a single bundle `.json` file for complete workspace backup.
+    - **Drag & Drop Import**: Drag and drop `.json` board files or backup archives directly onto the dropzone (or browse with file picker).
+    - **Direct JSON Paste**: Paste raw JSON strings into an expandable textarea to inspect and import boards.
+    - **Pre-Import Preview Card**: Inspect the board title, universe count, connection count, and noise configuration status before deciding to load or save.
+    - **Import Actions**: Choose to *Load on Canvas* (replaces current board), *Save to List* (stores in `localStorage` without wiping canvas), or *Load & Save*.
+    - **Bundle Archive Import**: Automatically detects backup bundles and imports multiple boards into `localStorage` in one click.
 - **Active Board Status & Quick Save (Bottom-Left)**:
   - When a saved board is opened or saved, its name appears in an active status pill in the bottom-left corner.
   - **Rename Active Board**: Click the pencil icon or double-click the board name to rename it via prompt dialog.
@@ -173,7 +183,9 @@ A top-left view navigation menu that launches movable, closable, and reducible g
 
 ### Window & Navigation Files
 - [`Values/windowConfig.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Values/windowConfig.js): Sizing, default positions, scaling ranges, and storage keys.
+- [`Values/exportConfig.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Values/exportConfig.js): Export schema versions, MIME types, file extensions, and size limits.
 - [`Scripts/windowManager.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/windowManager.js): Reusable draggable, closable, and reducible floating window component.
 - [`Scripts/savingManager.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/savingManager.js): Local board persistence, listing, opening, and deleting.
+- [`Scripts/exportManager.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/exportManager.js): JSON file import/export sharing engine, drag & drop reader, and preview inspector.
 - [`Scripts/paramsManager.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/paramsManager.js): Live noise parameter controls with 10%–1000% scaling.
 - [`Scripts/viewMenu.js`](file:///g:/AI%20Projects/InBetween%20Mapping/Scripts/viewMenu.js): Top-left navigation trigger and dropdown menu.
