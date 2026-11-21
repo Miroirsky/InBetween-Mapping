@@ -7,25 +7,34 @@
     <link rel="stylesheet" href="Styles/style.css">
 </head>
 <body>
-    <!-- 1. Fullscreen Noise Background Canvas (z-index: 1) -->
+    <!-- 1. Noise Background Canvas (z-index: 1, full viewport) -->
     <canvas id="noise-canvas"></canvas>
 
-    <!-- 2. Connections SVG Layer (z-index: 5) -->
-    <svg id="connection-svg-layer"></svg>
+    <!-- Square Board Frame that fits window and scales everything uniformly -->
+    <div id="board-frame">
+        <!-- 2. Connections SVG Layer (z-index: 5) -->
+        <svg id="connection-svg-layer" viewBox="0 0 1000 1000" width="1000" height="1000"></svg>
 
-    <!-- 3. Universe Bubbles Interactive Container (z-index: 10) -->
-    <div id="bubble-container"></div>
+        <!-- 3. Universe Bubbles Interactive Container (z-index: 10) -->
+        <div id="bubble-container"></div>
+    </div>
 
     <!-- Centralized Variables & Configs (Values/) -->
     <script src="Values/noiseConfig.js"></script>
     <script src="Values/bubbleConfig.js"></script>
     <script src="Values/connectionConfig.js"></script>
+    <script src="Values/windowConfig.js"></script>
 
     <!-- Modular Scripts (Scripts/) -->
+    <!-- Window System & Navigation -->
+    <script src="Scripts/windowManager.js"></script>
+    <script src="Scripts/savingManager.js"></script>
+    <script src="Scripts/paramsManager.js"></script>
+    <script src="Scripts/viewMenu.js"></script>
+
     <!-- Background & Shader -->
     <script src="Scripts/perlinShader.js"></script>
     <script src="Scripts/noiseRenderer.js"></script>
-    <script src="Scripts/ui.js"></script>
 
     <!-- Universe Bubbles, Connections, Physics & Interaction -->
     <script src="Scripts/bubbleManager.js"></script>

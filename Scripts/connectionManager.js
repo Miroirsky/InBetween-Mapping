@@ -22,9 +22,11 @@ class ConnectionManager {
     }
 
     initSVG() {
+        this.svg.setAttribute('viewBox', '0 0 1000 1000');
+        this.svg.style.overflow = 'visible';
         this.svg.innerHTML = `
             <defs>
-                <filter id="arrow-shadow" x="-20%" y="-20%" width="140%" height="140%">
+                <filter id="arrow-shadow" x="-50%" y="-50%" width="200%" height="200%">
                     <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000000" flood-opacity="0.6"/>
                 </filter>
             </defs>
@@ -34,6 +36,27 @@ class ConnectionManager {
 
         this.connectionsGroup = this.svg.getElementById('connections-group');
         this.previewGroup = this.svg.getElementById('preview-group');
+
+        // Robust hover detection across entire connection (line, arrowhead, label area)
+        this.bindHoverEvents();
+    }
+
+    bindHoverEvents() {
+        window.addEventListener('mousemove', (e) => {
+            const connEl = e.target.closest('.universe-connection');
+            document.querySelectorAll('.universe-connection.is-hovered').forEach(el => {
+                if (el !== connEl) el.classList.remove('is-hovered');
+            });
+            if (connEl) {
+                connEl.classList.add('is-hovered');
+            }
+        });
+
+        window.addEventListener('mouseout', (e) => {
+            if (!e.relatedTarget) {
+                document.querySelectorAll('.universe-connection.is-hovered').forEach(el => el.classList.remove('is-hovered'));
+            }
+        });
     }
 
     /**
@@ -44,19 +67,21 @@ class ConnectionManager {
     }
 
     /**
-     * Creates a new directed connection with a mandatory name
+     * Creates a new directed connection with a default name if not provided
      */
-    createConnection(fromId, toId, name) {
-        if (!name || name.trim() === '') return null;
+    createConnection(fromId, toId, name = '') {
         if (fromId === toId && !this.config.allowSelfConnection) return null;
         if (this.hasConnection(fromId, toId)) return null;
 
         const id = this.nextId++;
+        const defaultName = `Connection ${id}`;
+        const connName = (name && typeof name === 'string' && name.trim().length > 0) ? name.trim() : defaultName;
+
         const connection = {
             id,
             fromId,
             toId,
-            name: name.trim()
+            name: connName
         };
 
         this.connections.push(connection);
@@ -153,10 +178,8 @@ class ConnectionManager {
 
         this.previewGroup.innerHTML = `
             <line x1="${startX}" y1="${startY}" x2="${mouseX}" y2="${mouseY}"
-                  stroke="${this.config.arrowOutlineColor}" stroke-width="${this.config.arrowWidth + 2}" stroke-dasharray="6,4" stroke-linecap="round"/>
-            <line x1="${startX}" y1="${startY}" x2="${mouseX}" y2="${mouseY}"
                   stroke="${this.config.arrowColor}" stroke-width="${this.config.arrowWidth}" stroke-dasharray="6,4" stroke-linecap="round"/>
-            <circle cx="${mouseX}" cy="${mouseY}" r="4" fill="${this.config.arrowOutlineColor}"/>
+            <circle cx="${mouseX}" cy="${mouseY}" r="4" fill="${this.config.arrowColor}"/>
         `;
     }
 
@@ -258,58 +281,26 @@ class ConnectionManager {
 
             html += `
                 <g class="universe-connection" data-id="${conn.id}" filter="url(#arrow-shadow)">
-                    <!-- Outer White Stroke Line for Contrast -->
-                    <path d="${pathD}" fill="none" stroke="${cfg.arrowOutlineColor}"
-                          stroke-width="${cfg.arrowWidth + 2.5}" stroke-linecap="round" class="conn-outline"/>
-
-                    <!-- Black Arrow Line -->
+                    <!-- Arrow Line (No outline) -->
                     <path d="${pathD}" fill="none" stroke="${cfg.arrowColor}"
-                          stroke-width="${cfg.arrowWidth}" stroke-linecap="round" class="conn-line"/>
+                          stroke-width="${cfg.arrowWidth}" stroke-linecap="round" class="conn-line" pointer-events="stroke"/>
 
-                    <!-- Arrowhead Outer Border -->
-                    <polygon points="${arrowPolyPoints}" fill="${cfg.arrowOutlineColor}" stroke="${cfg.arrowOutlineColor}" stroke-width="2"/>
+                    <!-- Arrowhead (No outline) -->
+                    <polygon points="${arrowPolyPoints}" fill="${cfg.arrowColor}" class="conn-arrowhead" pointer-events="all"/>
 
-                    <!-- Arrowhead Black Body -->
-                    <polygon points="${arrowPolyPoints}" fill="${cfg.arrowColor}"/>
+                    <!-- Invisible thick hit area (36px wide) for easy hovering & right clicking -->
+                    <path d="${pathD}" fill="none" stroke="rgba(0,0,0,0.001)" stroke-width="36" class="conn-hitbox" pointer-events="stroke"/>
 
-                    <!-- Invisible thick hit area for easy right clicking -->
-                    <path d="${pathD}" fill="none" stroke="transparent" stroke-width="20" class="conn-hitbox"/>
-
-                    <!-- Centered Label Group -->
+                    <!-- Centered Title (Title only, visible on hover) -->
                     <g class="connection-label-group" transform="translate(${midX}, ${midY})">
-                        <text x="0" y="0" class="conn-label-text" text-anchor="middle" dominant-baseline="central">${safeName}</text>
+                        <rect x="-60" y="-16" width="120" height="32" fill="rgba(0,0,0,0.001)" class="conn-label-hitbox" pointer-events="all"/>
+                        <text x="0" y="0" class="conn-label-text" fill="${cfg.textColor}" text-anchor="middle" dominant-baseline="central">${safeName}</text>
                     </g>
                 </g>
             `;
         }
 
         this.connectionsGroup.innerHTML = html;
-        this.measureAndRenderLabelPills();
-    }
-
-    /**
-     * Measures text elements to fit black background pill with white border accurately
-     */
-    measureAndRenderLabelPills() {
-        const textElements = this.connectionsGroup.querySelectorAll('.conn-label-text');
-        textElements.forEach(textEl => {
-            const bbox = textEl.getBBox();
-            const padX = 8;
-            const padY = 4;
-            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            rect.setAttribute('x', bbox.x - padX);
-            rect.setAttribute('y', bbox.y - padY);
-            rect.setAttribute('width', bbox.width + padX * 2);
-            rect.setAttribute('height', bbox.height + padY * 2);
-            rect.setAttribute('rx', '4');
-            rect.setAttribute('ry', '4');
-            rect.setAttribute('fill', this.config.textBackgroundColor);
-            rect.setAttribute('stroke', this.config.textBorderColor);
-            rect.setAttribute('stroke-width', this.config.textBorderWidth);
-            rect.setAttribute('class', 'conn-label-bg');
-
-            textEl.parentNode.insertBefore(rect, textEl);
-        });
     }
 }
 

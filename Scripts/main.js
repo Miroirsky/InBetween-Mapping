@@ -6,17 +6,21 @@
  */
 
 document.addEventListener('DOMContentLoaded', () => {
+    // 0. Initial Board Frame Scale
+    const initialDim = Math.min(window.innerWidth, window.innerHeight);
+    document.documentElement.style.setProperty('--board-scale', initialDim / 1000);
+    document.documentElement.style.setProperty('--board-pan-x', '0px');
+    document.documentElement.style.setProperty('--board-pan-y', '0px');
+
     // 1. Noise Background Setup
     const canvas = document.getElementById('noise-canvas');
     const noiseConfig = window.NoiseConfig;
 
     let renderer = null;
-    let ui = null;
 
     if (canvas && noiseConfig) {
         renderer = new window.NoiseRenderer(canvas, noiseConfig);
         renderer.start();
-        ui = new window.NoiseUI(noiseConfig);
     } else {
         console.warn('Noise canvas or NoiseConfig not initialized.');
     }
@@ -50,10 +54,46 @@ document.addEventListener('DOMContentLoaded', () => {
     const contextMenu = new window.ContextMenu(bubbleManager, connectionManager);
     const interactionManager = new window.InteractionManager(bubbleManager, contextMenu, connectionManager);
 
+    if (renderer) {
+        interactionManager.setNoiseRenderer(renderer);
+    }
+    window.addEventListener('resize', () => {
+        interactionManager.applyViewTransform();
+    });
+
+    // 6. Window System & View Menu Setup
+    const windowConfig = window.WindowConfig;
+    let paramsManager = null;
+    if (window.ParamsManager && noiseConfig) {
+        paramsManager = new window.ParamsManager(noiseConfig, windowConfig);
+    }
+
+    let savingManager = null;
+    if (window.SavingManager) {
+        savingManager = new window.SavingManager(
+            bubbleManager,
+            connectionManager,
+            noiseConfig,
+            windowConfig,
+            () => {
+                if (paramsManager) paramsManager.syncFromConfig();
+            }
+        );
+        savingManager.setContextMenu(contextMenu);
+        bubbleManager.setSavingManager(savingManager);
+
+        // Auto-restore board state on refresh (or load active board)
+        savingManager.initAutoRestore();
+    }
+
+    let viewMenu = null;
+    if (window.ViewMenu && savingManager && paramsManager) {
+        viewMenu = new window.ViewMenu(savingManager, paramsManager, interactionManager);
+    }
+
     // Expose all modules on window.app for easy debugging or scripting
     window.app = {
         noiseRenderer: renderer,
-        noiseUI: ui,
         noiseConfig,
         bubbleManager,
         bubblePhysics,
@@ -61,6 +101,10 @@ document.addEventListener('DOMContentLoaded', () => {
         connectionManager,
         connectionConfig,
         contextMenu,
-        interactionManager
+        interactionManager,
+        windowConfig,
+        savingManager,
+        paramsManager,
+        viewMenu
     };
 });

@@ -24,6 +24,8 @@ const PerlinShader = {
         uniform int   u_octaves;
         uniform bool  u_invert;
         uniform bool  u_aspect;
+        uniform vec2  u_pan;
+        uniform float u_zoom;
 
         // --- 3D Simplex Noise by Ian McEwan, Ashima Arts (Public Domain) ---
         vec4 permute(vec4 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
@@ -97,11 +99,15 @@ const PerlinShader = {
 
         void main() {
             // Coordinate mapping (with optional aspect ratio preservation)
+            // Centered on and scaled with the board square and camera pan/zoom
             vec2 uv;
             if (u_aspect) {
-                uv = gl_FragCoord.xy / min(u_resolution.x, u_resolution.y);
+                vec2 boardCenter = u_resolution * 0.5 + vec2(u_pan.x, -u_pan.y);
+                float squareSize = min(u_resolution.x, u_resolution.y) * u_zoom;
+                vec2 squareOrigin = boardCenter - vec2(squareSize, squareSize) * 0.5;
+                uv = (gl_FragCoord.xy - squareOrigin) / squareSize;
             } else {
-                uv = gl_FragCoord.xy / u_resolution.xy;
+                uv = (gl_FragCoord.xy - vec2(u_pan.x, -u_pan.y)) / (u_resolution.xy * u_zoom);
             }
 
             // 3D coordinate: X and Y scale with noiseSize, Z moves with time * noiseSpeed

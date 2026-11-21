@@ -175,17 +175,7 @@ class BubblePhysics {
             }
         }
 
-        // 3. Integration, damping & boundary constraints
-        const winW = window.innerWidth;
-        const winH = window.innerHeight;
-        const minDim = Math.min(winW, winH);
-        const padding = minDim * ((this.config.boundaryPaddingPercent || 1) / 100);
-
-        const minX = radius + padding;
-        const maxX = winW - radius - padding;
-        const minY = radius + padding;
-        const maxY = winH - radius - padding;
-
+        // 3. Integration & damping
         for (let i = 0; i < count; i++) {
             const b = bubbles[i];
 
@@ -214,23 +204,6 @@ class BubblePhysics {
             // Zero tiny movements to avoid infinite micro-jitter
             if (Math.abs(b.vx) < 0.01) b.vx = 0;
             if (Math.abs(b.vy) < 0.01) b.vy = 0;
-
-            // Window boundary containment with soft bounce
-            if (b.x < minX) {
-                b.x = minX;
-                b.vx = Math.abs(b.vx) * 0.4;
-            } else if (b.x > maxX) {
-                b.x = maxX;
-                b.vx = -Math.abs(b.vx) * 0.4;
-            }
-
-            if (b.y < minY) {
-                b.y = minY;
-                b.vy = Math.abs(b.vy) * 0.4;
-            } else if (b.y > maxY) {
-                b.y = maxY;
-                b.vy = -Math.abs(b.vy) * 0.4;
-            }
 
             // Update DOM element visual transform
             this.manager.updateElementPosition(b);

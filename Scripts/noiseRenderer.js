@@ -68,8 +68,14 @@ class NoiseRenderer {
             steps: gl.getUniformLocation(this.program, 'u_steps'),
             octaves: gl.getUniformLocation(this.program, 'u_octaves'),
             invert: gl.getUniformLocation(this.program, 'u_invert'),
-            aspect: gl.getUniformLocation(this.program, 'u_aspect')
+            aspect: gl.getUniformLocation(this.program, 'u_aspect'),
+            pan: gl.getUniformLocation(this.program, 'u_pan'),
+            zoom: gl.getUniformLocation(this.program, 'u_zoom')
         };
+
+        this.panX = 0;
+        this.panY = 0;
+        this.zoom = 1.0;
 
         // Initial resize
         this.resize();
@@ -129,6 +135,8 @@ class NoiseRenderer {
 
         const elapsedTime = (performance.now() - this.startTime) / 1000.0;
 
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
         // Pass uniform values from NoiseConfig
         gl.uniform2f(this.uniforms.resolution, this.canvas.width, this.canvas.height);
         gl.uniform1f(this.uniforms.time, elapsedTime);
@@ -138,11 +146,19 @@ class NoiseRenderer {
         gl.uniform1i(this.uniforms.octaves, cfg.octaves || 1);
         gl.uniform1i(this.uniforms.invert, cfg.invert ? 1 : 0);
         gl.uniform1i(this.uniforms.aspect, cfg.maintainAspectRatio ? 1 : 0);
+        gl.uniform2f(this.uniforms.pan, this.panX * dpr, this.panY * dpr);
+        gl.uniform1f(this.uniforms.zoom, this.zoom);
 
         // Draw quad
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
         this.animationFrameId = requestAnimationFrame(() => this.render());
+    }
+
+    setPanAndZoom(panX, panY, zoom) {
+        this.panX = panX;
+        this.panY = panY;
+        this.zoom = zoom;
     }
 
     start() {

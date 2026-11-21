@@ -11,11 +11,13 @@ class ContextMenu {
         this.connectionManager = connectionManager || null;
         this.menuElement = null;
         this.modalElement = null;
+        this.colorModalElement = null;
         this.activeTargetBubbleId = null;
         this.isOpen = false;
 
         this.createMenuDOM();
         this.createModalDOM();
+        this.createColorModalDOM();
         this.bindGlobalEvents();
     }
 
@@ -109,6 +111,117 @@ class ContextMenu {
         this.modalElement.classList.remove('visible');
     }
 
+    createColorModalDOM() {
+        const modal = document.createElement('div');
+        modal.id = 'custom-color-modal';
+        modal.className = 'custom-input-modal-backdrop';
+        modal.innerHTML = `
+            <div class="custom-modal-card color-modal-card">
+                <div class="modal-header">
+                    <h3 class="modal-title">Universe Color</h3>
+                </div>
+                <div class="modal-body color-picker-body">
+                    <div class="color-preview-container">
+                        <div id="modal-color-preview" class="color-preview-sphere"></div>
+                    </div>
+                    <div class="color-swatches-grid" id="modal-swatches-grid"></div>
+                    <div class="color-custom-row">
+                        <input type="color" id="modal-color-picker" class="modal-color-input" value="#000000">
+                        <input type="text" id="modal-hex-input" class="modal-hex-text" value="#000000" maxlength="7" spellcheck="false" placeholder="#000000">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="modal-color-cancel-btn" class="modal-btn secondary">Cancel</button>
+                    <button id="modal-color-confirm-btn" class="modal-btn primary">Apply</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        this.colorModalElement = modal;
+
+        this.colorPreview = modal.querySelector('#modal-color-preview');
+        this.colorPickerInput = modal.querySelector('#modal-color-picker');
+        this.hexInput = modal.querySelector('#modal-hex-input');
+        this.colorConfirmBtn = modal.querySelector('#modal-color-confirm-btn');
+        this.colorCancelBtn = modal.querySelector('#modal-color-cancel-btn');
+        this.swatchesGrid = modal.querySelector('#modal-swatches-grid');
+
+        this.colorCancelBtn.addEventListener('click', () => this.closeColorModal());
+    }
+
+    updateColorPreview(hex) {
+        const c100 = this.manager.hexToRgba(hex, 1);
+        const c0 = this.manager.hexToRgba(hex, 0);
+        this.colorPreview.style.background = `radial-gradient(circle closest-side, ${c100} 0%, ${c0} 100%)`;
+        this.colorPickerInput.value = hex;
+        this.hexInput.value = hex.toUpperCase();
+    }
+
+    showColorPrompt({ currentColor, onSubmit }) {
+        this.close(); // Close any context menu
+
+        const presets = [
+            '#000000', '#1e1b4b', '#4338ca', '#0284c7', '#059669',
+            '#d97706', '#dc2626', '#9333ea', '#db2777', '#475569'
+        ];
+
+        let selectedColor = currentColor || '#000000';
+        this.updateColorPreview(selectedColor);
+
+        // Populate preset swatches
+        this.swatchesGrid.innerHTML = '';
+        presets.forEach(hex => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = `color-swatch-btn ${hex.toLowerCase() === selectedColor.toLowerCase() ? 'is-active' : ''}`;
+            btn.style.backgroundColor = hex;
+            btn.title = hex;
+            btn.addEventListener('click', () => {
+                selectedColor = hex;
+                this.updateColorPreview(selectedColor);
+                this.swatchesGrid.querySelectorAll('.color-swatch-btn').forEach(b => b.classList.remove('is-active'));
+                btn.classList.add('is-active');
+            });
+            this.swatchesGrid.appendChild(btn);
+        });
+
+        // Color picker change handler
+        this.colorPickerInput.oninput = (e) => {
+            selectedColor = e.target.value;
+            this.updateColorPreview(selectedColor);
+            this.swatchesGrid.querySelectorAll('.color-swatch-btn').forEach(b => b.classList.remove('is-active'));
+        };
+
+        // Hex text change handler
+        this.hexInput.oninput = (e) => {
+            let val = e.target.value.trim();
+            if (!val.startsWith('#')) val = '#' + val;
+            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                selectedColor = val;
+                this.updateColorPreview(selectedColor);
+                this.swatchesGrid.querySelectorAll('.color-swatch-btn').forEach(b => b.classList.remove('is-active'));
+            }
+        };
+
+        // Confirm button
+        const newConfirmBtn = this.colorConfirmBtn.cloneNode(true);
+        this.colorConfirmBtn.parentNode.replaceChild(newConfirmBtn, this.colorConfirmBtn);
+        this.colorConfirmBtn = newConfirmBtn;
+
+        this.colorConfirmBtn.addEventListener('click', () => {
+            this.closeColorModal();
+            if (onSubmit) onSubmit(selectedColor);
+        });
+
+        this.colorModalElement.classList.add('visible');
+    }
+
+    closeColorModal() {
+        if (this.colorModalElement) {
+            this.colorModalElement.classList.remove('visible');
+        }
+    }
+
     bindGlobalEvents() {
         // Dismiss on left click outside
         window.addEventListener('click', (e) => {
@@ -121,7 +234,8 @@ class ContextMenu {
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 if (this.isOpen) this.close();
-                if (this.modalElement.classList.contains('visible')) this.closeModal();
+                if (this.modalElement && this.modalElement.classList.contains('visible')) this.closeModal();
+                if (this.colorModalElement && this.colorModalElement.classList.contains('visible')) this.closeColorModal();
             }
         });
 
@@ -134,8 +248,11 @@ class ContextMenu {
     /**
      * Show menu for void right-click
      */
-    showVoidMenu(x, y) {
+    showVoidMenu(boardX, boardY, screenX, screenY) {
         this.activeTargetBubbleId = null;
+
+        const posX = screenX !== undefined ? screenX : boardX;
+        const posY = screenY !== undefined ? screenY : boardY;
 
         const items = [
             {
@@ -148,7 +265,15 @@ class ContextMenu {
                     </svg>
                 `,
                 action: () => {
-                    this.manager.createBubble(x, y);
+                    this.showPrompt({
+                        title: 'Create Universe',
+                        placeholder: 'Enter universe name...',
+                        defaultValue: `Universe ${this.manager.nextId}`,
+                        confirmText: 'Create',
+                        onSubmit: (name) => {
+                            this.manager.createBubble(boardX, boardY, name);
+                        }
+                    });
                 }
             },
             {
@@ -166,7 +291,7 @@ class ContextMenu {
             }
         ];
 
-        this.renderMenu(items, x, y);
+        this.renderMenu('Board', items, posX, posY);
     }
 
     /**
@@ -180,6 +305,43 @@ class ContextMenu {
         const isLocked = bubble.isLocked;
 
         const items = [
+            {
+                label: 'Edit Name',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 20h9"></path>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                    </svg>
+                `,
+                action: () => {
+                    this.showPrompt({
+                        title: 'Edit Universe Name',
+                        placeholder: 'Enter universe name...',
+                        defaultValue: bubble.name,
+                        confirmText: 'Update',
+                        onSubmit: (newName) => {
+                            this.manager.renameBubble(bubbleId, newName);
+                        }
+                    });
+                }
+            },
+            {
+                label: 'Change Color',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="9"></circle>
+                        <path d="M12 3a9 9 0 0 1 9 9c0 2.5-2 4.5-4.5 4.5h-1.5a2 2 0 0 0-2 2v.5a2 2 0 0 1-2 2c-.5 0-1-.2-1.5-.5"></path>
+                    </svg>
+                `,
+                action: () => {
+                    this.showColorPrompt({
+                        currentColor: bubble.color || this.manager.config.bubbleColor || '#000000',
+                        onSubmit: (newColor) => {
+                            this.manager.setBubbleColor(bubbleId, newColor);
+                        }
+                    });
+                }
+            },
             {
                 label: 'Add Connection',
                 icon: `
@@ -216,9 +378,9 @@ class ContextMenu {
                 danger: true,
                 icon: `
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
                 `,
                 action: () => {
                     this.manager.removeBubble(bubbleId);
@@ -226,7 +388,7 @@ class ContextMenu {
             }
         ];
 
-        this.renderMenu(items, x, y);
+        this.renderMenu(bubble.name || 'Universe', items, x, y);
     }
 
     /**
@@ -236,6 +398,10 @@ class ContextMenu {
         if (!this.connectionManager) return;
         const conn = this.connectionManager.getConnectionById(connectionId);
         if (!conn) return;
+
+        // Keep label visible while context menu is open
+        const connEl = document.querySelector(`.universe-connection[data-id="${connectionId}"]`);
+        if (connEl) connEl.classList.add('is-active-context');
 
         const items = [
             {
@@ -273,11 +439,23 @@ class ContextMenu {
             }
         ];
 
-        this.renderMenu(items, x, y);
+        this.renderMenu(conn.name || 'Connection', items, x, y);
     }
 
-    renderMenu(items, x, y) {
+    renderMenu(title, items, x, y) {
         this.menuElement.innerHTML = '';
+
+        if (title) {
+            const header = document.createElement('div');
+            header.className = 'context-menu-header';
+            header.textContent = title;
+            header.title = title;
+            this.menuElement.appendChild(header);
+
+            const divider = document.createElement('div');
+            divider.className = 'context-menu-divider';
+            this.menuElement.appendChild(divider);
+        }
 
         items.forEach(item => {
             const btn = document.createElement('button');
@@ -330,6 +508,7 @@ class ContextMenu {
         this.menuElement.style.display = 'none';
         this.isOpen = false;
         this.activeTargetBubbleId = null;
+        document.querySelectorAll('.universe-connection.is-active-context').forEach(el => el.classList.remove('is-active-context'));
     }
 }
 
