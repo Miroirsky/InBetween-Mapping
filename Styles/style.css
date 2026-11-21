@@ -443,14 +443,16 @@ body.is-dragging-bubble * {
 
 .universe-connection .connection-label-group {
     opacity: 0;
+    visibility: hidden;
     pointer-events: auto;
-    transition: opacity 0.15s ease;
+    transition: opacity 0.15s ease, visibility 0.15s ease;
 }
 
 .universe-connection:hover .connection-label-group,
 .universe-connection.is-hovered .connection-label-group,
 .universe-connection.is-active-context .connection-label-group {
     opacity: 1 !important;
+    visibility: visible !important;
 }
 
 .universe-connection .conn-label-hitbox {

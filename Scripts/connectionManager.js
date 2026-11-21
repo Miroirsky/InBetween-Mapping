@@ -13,6 +13,7 @@ class ConnectionManager {
 
         this.connections = []; // [{ id, fromId, toId, name }]
         this.nextId = 1;
+        this.hoveredConnectionId = null;
 
         // Active connection creation state (when user clicks "Add Connection")
         this.pendingSourceId = null;
@@ -37,24 +38,109 @@ class ConnectionManager {
         this.connectionsGroup = this.svg.getElementById('connections-group');
         this.previewGroup = this.svg.getElementById('preview-group');
 
-        // Robust hover detection across entire connection (line, arrowhead, label area)
         this.bindHoverEvents();
     }
 
     bindHoverEvents() {
-        window.addEventListener('mousemove', (e) => {
-            const connEl = e.target.closest('.universe-connection');
-            document.querySelectorAll('.universe-connection.is-hovered').forEach(el => {
-                if (el !== connEl) el.classList.remove('is-hovered');
-            });
-            if (connEl) {
-                connEl.classList.add('is-hovered');
-            }
-        });
-
         window.addEventListener('mouseout', (e) => {
             if (!e.relatedTarget) {
-                document.querySelectorAll('.universe-connection.is-hovered').forEach(el => el.classList.remove('is-hovered'));
+                this.setHoveredConnection(null);
+            }
+        });
+    }
+
+    /**
+     * Mathematical distance from board coordinate (px, py) to a connection line or curve
+     */
+    getDistanceToConnection(conn, px, py) {
+        const fromBubble = this.bubbleManager.getBubbleById(conn.fromId);
+        const toBubble = this.bubbleManager.getBubbleById(conn.toId);
+        if (!fromBubble || !toBubble) return Infinity;
+
+        const radius = this.bubbleManager.currentRadius;
+        const cfg = this.config;
+        const dx = toBubble.x - fromBubble.x;
+        const dy = toBubble.y - fromBubble.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 1) return Infinity;
+
+        const angle = Math.atan2(dy, dx);
+        const hasReverse = this.hasConnection(conn.toId, conn.fromId);
+
+        let startX, startY, endX, endY, ctrlX, ctrlY;
+
+        if (hasReverse) {
+            const curveOffset = cfg.bidirectionalCurveOffset;
+            const normalX = -Math.sin(angle);
+            const normalY = Math.cos(angle);
+            const startShiftAngle = angle + 0.2;
+            const endShiftAngle = angle - 0.2;
+
+            startX = fromBubble.x + radius * Math.cos(startShiftAngle);
+            startY = fromBubble.y + radius * Math.sin(startShiftAngle);
+            endX = toBubble.x - radius * Math.cos(endShiftAngle);
+            endY = toBubble.y - radius * Math.sin(endShiftAngle);
+
+            const rawMidX = (fromBubble.x + toBubble.x) * 0.5;
+            const rawMidY = (fromBubble.y + toBubble.y) * 0.5;
+            ctrlX = rawMidX + normalX * curveOffset;
+            ctrlY = rawMidY + normalY * curveOffset;
+
+            let minDist = Infinity;
+            for (let s = 0; s <= 10; s++) {
+                const t = s / 10;
+                const omt = 1 - t;
+                const bx = omt * omt * startX + 2 * omt * t * ctrlX + t * t * endX;
+                const by = omt * omt * startY + 2 * omt * t * ctrlY + t * t * endY;
+                const d = Math.hypot(px - bx, py - by);
+                if (d < minDist) minDist = d;
+            }
+            return minDist;
+        } else {
+            startX = fromBubble.x + radius * Math.cos(angle);
+            startY = fromBubble.y + radius * Math.sin(angle);
+            endX = toBubble.x - radius * Math.cos(angle);
+            endY = toBubble.y - radius * Math.sin(angle);
+
+            const segDx = endX - startX;
+            const segDy = endY - startY;
+            const segLenSq = segDx * segDx + segDy * segDy;
+            if (segLenSq === 0) return Math.hypot(px - startX, py - startY);
+
+            const t = Math.max(0, Math.min(1, ((px - startX) * segDx + (py - startY) * segDy) / segLenSq));
+            const projX = startX + t * segDx;
+            const projY = startY + t * segDy;
+            return Math.hypot(px - projX, py - projY);
+        }
+    }
+
+    checkHover(boardX, boardY) {
+        let bestId = null;
+        let bestDist = 32; // Generous hover zone in board coordinates
+
+        for (let i = 0; i < this.connections.length; i++) {
+            const conn = this.connections[i];
+            const d = this.getDistanceToConnection(conn, boardX, boardY);
+            if (d < bestDist) {
+                bestDist = d;
+                bestId = conn.id;
+            }
+        }
+
+        this.setHoveredConnection(bestId);
+    }
+
+    setHoveredConnection(connId) {
+        if (this.hoveredConnectionId === connId) return;
+        this.hoveredConnectionId = connId;
+
+        const allConnEls = this.connectionsGroup.querySelectorAll('.universe-connection');
+        allConnEls.forEach(el => {
+            const id = Number(el.dataset.id);
+            if (id === connId) {
+                el.classList.add('is-hovered');
+            } else {
+                el.classList.remove('is-hovered');
             }
         });
     }
@@ -191,7 +277,16 @@ class ConnectionManager {
 
         const radius = this.bubbleManager.currentRadius;
         const cfg = this.config;
-        let html = '';
+        const currentIds = new Set(this.connections.map(c => c.id));
+
+        // Remove any deleted connection elements from SVG
+        const existingEls = this.connectionsGroup.querySelectorAll('.universe-connection');
+        existingEls.forEach(el => {
+            const id = Number(el.dataset.id);
+            if (!currentIds.has(id)) {
+                el.remove();
+            }
+        });
 
         for (let i = 0; i < this.connections.length; i++) {
             const conn = this.connections[i];
@@ -271,36 +366,49 @@ class ConnectionManager {
             const rightWingY = backY - perpY;
 
             const arrowPolyPoints = `${arrowTipX},${arrowTipY} ${leftWingX},${leftWingY} ${rightWingX},${rightWingY}`;
+            const safeName = conn.name || '';
 
-            // Escape HTML in name
-            const safeName = conn.name
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
+            let connGroup = this.connectionsGroup.querySelector(`.universe-connection[data-id="${conn.id}"]`);
+            if (!connGroup) {
+                connGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                connGroup.setAttribute('class', 'universe-connection');
+                connGroup.setAttribute('data-id', conn.id);
+                connGroup.setAttribute('filter', 'url(#arrow-shadow)');
 
-            html += `
-                <g class="universe-connection" data-id="${conn.id}" filter="url(#arrow-shadow)">
-                    <!-- Arrow Line (No outline) -->
-                    <path d="${pathD}" fill="none" stroke="${cfg.arrowColor}"
-                          stroke-width="${cfg.arrowWidth}" stroke-linecap="round" class="conn-line" pointer-events="stroke"/>
-
-                    <!-- Arrowhead (No outline) -->
-                    <polygon points="${arrowPolyPoints}" fill="${cfg.arrowColor}" class="conn-arrowhead" pointer-events="all"/>
-
-                    <!-- Invisible thick hit area (36px wide) for easy hovering & right clicking -->
-                    <path d="${pathD}" fill="none" stroke="rgba(0,0,0,0.001)" stroke-width="36" class="conn-hitbox" pointer-events="stroke"/>
-
-                    <!-- Centered Title (Title only, visible on hover) -->
-                    <g class="connection-label-group" transform="translate(${midX}, ${midY})">
+                connGroup.innerHTML = `
+                    <path fill="none" stroke="${cfg.arrowColor}" stroke-width="${cfg.arrowWidth}" stroke-linecap="round" class="conn-line" pointer-events="stroke"/>
+                    <polygon fill="${cfg.arrowColor}" class="conn-arrowhead" pointer-events="all"/>
+                    <path fill="none" stroke="rgba(0,0,0,0.001)" stroke-width="36" class="conn-hitbox" pointer-events="stroke"/>
+                    <g class="connection-label-group">
                         <rect x="-60" y="-16" width="120" height="32" fill="rgba(0,0,0,0.001)" class="conn-label-hitbox" pointer-events="all"/>
-                        <text x="0" y="0" class="conn-label-text" fill="${cfg.textColor}" text-anchor="middle" dominant-baseline="central">${safeName}</text>
+                        <text x="0" y="0" class="conn-label-text" fill="${cfg.textColor}" text-anchor="middle" dominant-baseline="central"></text>
                     </g>
-                </g>
-            `;
-        }
+                `;
+                this.connectionsGroup.appendChild(connGroup);
+            }
 
-        this.connectionsGroup.innerHTML = html;
+            // Update attributes on persistent DOM elements without destroying them
+            const line = connGroup.querySelector('.conn-line');
+            if (line) line.setAttribute('d', pathD);
+
+            const head = connGroup.querySelector('.conn-arrowhead');
+            if (head) head.setAttribute('points', arrowPolyPoints);
+
+            const hitbox = connGroup.querySelector('.conn-hitbox');
+            if (hitbox) hitbox.setAttribute('d', pathD);
+
+            const labelGroup = connGroup.querySelector('.connection-label-group');
+            if (labelGroup) labelGroup.setAttribute('transform', `translate(${midX}, ${midY})`);
+
+            const labelText = connGroup.querySelector('.conn-label-text');
+            if (labelText && labelText.textContent !== safeName) {
+                labelText.textContent = safeName;
+            }
+
+            if (conn.id === this.hoveredConnectionId) {
+                connGroup.classList.add('is-hovered');
+            }
+        }
     }
 }
 

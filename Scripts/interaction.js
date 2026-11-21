@@ -228,17 +228,23 @@ class InteractionManager {
             }
 
             // Handle dragged bubble
-            if (!this.draggedBubble) return;
+            if (this.draggedBubble) {
+                const newX = boardCoords.x + this.dragOffsetX;
+                const newY = boardCoords.y + this.dragOffsetY;
 
-            const newX = boardCoords.x + this.dragOffsetX;
-            const newY = boardCoords.y + this.dragOffsetY;
+                this.draggedBubble.x = newX;
+                this.draggedBubble.y = newY;
+                this.draggedBubble.vx = 0;
+                this.draggedBubble.vy = 0;
 
-            this.draggedBubble.x = newX;
-            this.draggedBubble.y = newY;
-            this.draggedBubble.vx = 0;
-            this.draggedBubble.vy = 0;
+                this.manager.updateElementPosition(this.draggedBubble);
+                return;
+            }
 
-            this.manager.updateElementPosition(this.draggedBubble);
+            // Normal hover: check if hovering near any connection line or label
+            if (this.connectionManager) {
+                this.connectionManager.checkHover(boardCoords.x, boardCoords.y);
+            }
         });
 
         // Mouse up (End bubble drag or background pan)
