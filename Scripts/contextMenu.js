@@ -12,12 +12,14 @@ class ContextMenu {
         this.menuElement = null;
         this.modalElement = null;
         this.colorModalElement = null;
+        this.confirmModalElement = null;
         this.activeTargetBubbleId = null;
         this.isOpen = false;
 
         this.createMenuDOM();
         this.createModalDOM();
         this.createColorModalDOM();
+        this.createConfirmModalDOM();
         this.bindGlobalEvents();
     }
 
@@ -222,6 +224,85 @@ class ContextMenu {
         }
     }
 
+    createConfirmModalDOM() {
+        const modal = document.createElement('div');
+        modal.id = 'custom-confirm-modal';
+        modal.className = 'custom-input-modal-backdrop';
+        modal.innerHTML = `
+            <div class="custom-modal-card confirm-modal-card">
+                <div class="modal-header">
+                    <h3 id="confirm-modal-title" class="modal-title">Remove Universe</h3>
+                </div>
+                <div class="modal-body confirm-modal-body">
+                    <p id="confirm-modal-message" class="confirm-modal-message"></p>
+                    <p id="confirm-modal-subtext" class="confirm-modal-subtext"></p>
+                </div>
+                <div class="modal-footer">
+                    <button id="confirm-modal-cancel-btn" class="modal-btn secondary">Cancel</button>
+                    <button id="confirm-modal-confirm-btn" class="modal-btn danger">Delete Universe</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        this.confirmModalElement = modal;
+
+        this.confirmModalTitle = modal.querySelector('#confirm-modal-title');
+        this.confirmModalMessage = modal.querySelector('#confirm-modal-message');
+        this.confirmModalSubtext = modal.querySelector('#confirm-modal-subtext');
+        this.confirmModalCancelBtn = modal.querySelector('#confirm-modal-cancel-btn');
+        this.confirmModalConfirmBtn = modal.querySelector('#confirm-modal-confirm-btn');
+
+        this.confirmModalCancelBtn.addEventListener('click', () => this.closeConfirmModal());
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                this.closeConfirmModal();
+            }
+        });
+    }
+
+    /**
+     * Reusable in-app confirmation modal for destructive actions (e.g., bubble deletion)
+     */
+    showConfirm({ title, message, subtext = '', confirmText = 'Delete', cancelText = 'Cancel', danger = true, onConfirm }) {
+        this.close();
+        this.confirmModalTitle.textContent = title || 'Confirm Action';
+        this.confirmModalMessage.textContent = message || 'Are you sure?';
+
+        if (subtext) {
+            this.confirmModalSubtext.textContent = subtext;
+            this.confirmModalSubtext.style.display = 'block';
+        } else {
+            this.confirmModalSubtext.textContent = '';
+            this.confirmModalSubtext.style.display = 'none';
+        }
+
+        this.confirmModalCancelBtn.textContent = cancelText;
+        this.confirmModalConfirmBtn.textContent = confirmText;
+        this.confirmModalConfirmBtn.className = `modal-btn ${danger ? 'danger' : 'primary'}`;
+
+        const newConfirmBtn = this.confirmModalConfirmBtn.cloneNode(true);
+        this.confirmModalConfirmBtn.parentNode.replaceChild(newConfirmBtn, this.confirmModalConfirmBtn);
+        this.confirmModalConfirmBtn = newConfirmBtn;
+
+        this.confirmModalConfirmBtn.addEventListener('click', () => {
+            this.closeConfirmModal();
+            if (onConfirm) onConfirm();
+        });
+
+        this.confirmModalElement.classList.add('visible');
+
+        setTimeout(() => {
+            this.confirmModalConfirmBtn.focus();
+        }, 50);
+    }
+
+    closeConfirmModal() {
+        if (this.confirmModalElement) {
+            this.confirmModalElement.classList.remove('visible');
+        }
+    }
+
     bindGlobalEvents() {
         // Dismiss on left click outside
         window.addEventListener('click', (e) => {
@@ -236,6 +317,7 @@ class ContextMenu {
                 if (this.isOpen) this.close();
                 if (this.modalElement && this.modalElement.classList.contains('visible')) this.closeModal();
                 if (this.colorModalElement && this.colorModalElement.classList.contains('visible')) this.closeColorModal();
+                if (this.confirmModalElement && this.confirmModalElement.classList.contains('visible')) this.closeConfirmModal();
             }
         });
 
@@ -386,7 +468,26 @@ class ContextMenu {
                 </svg>
                 `,
                 action: () => {
-                    this.manager.removeBubble(bubbleId);
+                    const currentBubble = this.manager.getBubbleById(bubbleId);
+                    const bName = (currentBubble && currentBubble.name) ? currentBubble.name : 'this universe';
+                    const connCount = this.connectionManager
+                        ? this.connectionManager.connections.filter(c => Number(c.fromId) === Number(bubbleId) || Number(c.toId) === Number(bubbleId)).length
+                        : 0;
+                    const subtext = connCount > 0
+                        ? `This will also remove ${connCount} attached connection${connCount > 1 ? 's' : ''}.`
+                        : 'This universe will be permanently removed from the board.';
+
+                    this.showConfirm({
+                        title: 'Remove Universe',
+                        message: `Are you sure you want to delete "${bName}"?`,
+                        subtext,
+                        confirmText: 'Remove',
+                        cancelText: 'Cancel',
+                        danger: true,
+                        onConfirm: () => {
+                            this.manager.removeBubble(bubbleId);
+                        }
+                    });
                 }
             }
         ];

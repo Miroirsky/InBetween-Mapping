@@ -630,6 +630,35 @@ body.is-connecting-mode * {
     box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
 }
 
+.modal-btn.danger {
+    background: #ef4444;
+    color: #ffffff;
+}
+
+.modal-btn.danger:hover {
+    background: #dc2626;
+    box-shadow: 0 0 14px rgba(239, 68, 68, 0.45);
+}
+
+.confirm-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.confirm-modal-message {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: #f4f4f5;
+    line-height: 1.4;
+}
+
+.confirm-modal-subtext {
+    font-size: 12px;
+    color: #9ca3af;
+    line-height: 1.4;
+}
+
 /* ==================================================================
    Universe Color Picker Modal
    ================================================================== */
