@@ -800,11 +800,10 @@ class OnlineManager {
                                 local.element.classList.toggle('is-attached', nextBubbleId !== null);
                             }
 
-                            // Only apply raw (rc.x, rc.y) directly for unattached root comments;
-                            // attached comments are positioned deterministically by syncAttachedHierarchy()
-                            // so stale Firebase coordinates can never fight live bubble/parent movement.
-                            const isAttachedToParent = (nextBubbleId !== null) || childCommentIdsWithParent.has(id);
-                            if (!isAttachedToParent) {
+                            // Apply raw (rc.x, rc.y) for comments not directly attached to a bubble;
+                            // track remote updatedAt so free-floating linked clusters resolve from the newest moved comment.
+                            local._lastRemoteUpdateAt = rc.updatedAt || now;
+                            if (nextBubbleId === null) {
                                 local.x = rc.x;
                                 local.y = rc.y;
                                 this.commentManager.updateElementPosition(local);

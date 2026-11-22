@@ -942,12 +942,24 @@ class InteractionManager {
                             c.offsetY = c.y - attachedBubble.y;
                         }
                     }
-                    const updatedLinks = this.commentManager.updateOutgoingLinkOffsets(c.id);
-                    this.commentManager.updateElementPosition(c);
-                    this.commentManager.syncAttachedHierarchy(true);
+
+                    // Hold Shift (or if another comment in this group is anchored to a bubble) to reposition
+                    // this comment relative to its linked comments; otherwise move all connected comments together!
+                    const anchoredElsewhere = c.attachedBubbleId === null && this.commentManager.hasBubbleAnchorInComponent(c.id, c.id);
+                    let updatedLinks = [];
+                    let movedConnected = [];
+
+                    if (e.shiftKey || anchoredElsewhere) {
+                        updatedLinks = this.commentManager.updateIncidentLinkOffsets(c.id);
+                        this.commentManager.updateElementPosition(c);
+                        this.commentManager.renderConnections();
+                    } else {
+                        this.commentManager.updateElementPosition(c);
+                        movedConnected = this.commentManager.syncAttachedHierarchy(true, c.id);
+                    }
 
                     if (this.commentManager.onlineManager && this.commentManager.onlineManager.isOnline) {
-                        this.commentManager.onlineManager.onCommentDrag(c);
+                        this.commentManager.onlineManager.onCommentDrag([c, ...movedConnected]);
                         updatedLinks.forEach(l => this.commentManager.onlineManager.onCommentLinkUpdated(l));
                     }
                 }
@@ -1144,8 +1156,9 @@ class InteractionManager {
                     this.commentManager.openCommentLink(comment.id);
                 } else if (didMove) {
                     if (this.commentManager && this.commentManager.onlineManager && this.commentManager.onlineManager.isOnline) {
-                        const updatedLinks = this.commentManager.updateOutgoingLinkOffsets(comment.id);
-                        this.commentManager.onlineManager.onCommentDragEnd(comment);
+                        const updatedLinks = this.commentManager.updateIncidentLinkOffsets(comment.id);
+                        const component = this.commentManager.getConnectedCommentComponent(comment.id);
+                        this.commentManager.onlineManager.onCommentDragEnd(component.length > 0 ? component : [comment]);
                         updatedLinks.forEach(l => this.commentManager.onlineManager.onCommentLinkUpdated(l));
                     } else if (this.manager.savingManager) {
                         this.manager.savingManager.saveSessionSnapshot();

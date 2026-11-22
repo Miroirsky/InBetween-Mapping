@@ -665,10 +665,10 @@ class CommentManager {
     }
 
     /**
-     * Updates stored (offsetX, offsetY) on all outgoing parent links of a comment
-     * (called when the user drags that comment directly). Returns the updated links.
+     * Updates stored (offsetX, offsetY) on all links touching a comment
+     * (called when repositioning a comment relative to its neighbors). Returns the updated links.
      */
-    updateOutgoingLinkOffsets(commentId) {
+    updateIncidentLinkOffsets(commentId) {
         const id = Number(commentId);
         const comment = this.getCommentById(id);
         if (!comment) return [];
@@ -676,15 +676,81 @@ class CommentManager {
         const updatedLinks = [];
         for (const link of this.commentLinks) {
             if (link.fromCommentId === id) {
-                const parent = this.getCommentById(link.toCommentId);
-                if (parent) {
-                    link.offsetX = Math.round((comment.x - parent.x) * 100) / 100;
-                    link.offsetY = Math.round((comment.y - parent.y) * 100) / 100;
+                const other = this.getCommentById(link.toCommentId);
+                if (other) {
+                    link.offsetX = Math.round((comment.x - other.x) * 100) / 100;
+                    link.offsetY = Math.round((comment.y - other.y) * 100) / 100;
+                    updatedLinks.push(link);
+                }
+            } else if (link.toCommentId === id) {
+                const other = this.getCommentById(link.fromCommentId);
+                if (other) {
+                    link.offsetX = Math.round((other.x - comment.x) * 100) / 100;
+                    link.offsetY = Math.round((other.y - comment.y) * 100) / 100;
                     updatedLinks.push(link);
                 }
             }
         }
         return updatedLinks;
+    }
+
+    /**
+     * Returns true if any comment in the same comment-link component (excluding `excludeId`)
+     * is directly attached to a bubble.
+     */
+    hasBubbleAnchorInComponent(startCommentId, excludeId = null) {
+        const startId = Number(startCommentId);
+        const visited = new Set([startId]);
+        const queue = [startId];
+
+        while (queue.length > 0) {
+            const cur = queue.shift();
+            if (cur !== excludeId) {
+                const c = this.getCommentById(cur);
+                if (c && c.attachedBubbleId !== null) return true;
+            }
+            for (const link of this.commentLinks) {
+                let nextId = null;
+                if (link.fromCommentId === cur) nextId = link.toCommentId;
+                else if (link.toCommentId === cur) nextId = link.fromCommentId;
+                if (nextId !== null && !visited.has(nextId)) {
+                    visited.add(nextId);
+                    queue.push(nextId);
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns all comments in the same comment-link connected component as `startCommentId`.
+     */
+    getConnectedCommentComponent(startCommentId) {
+        const startId = Number(startCommentId);
+        const start = this.getCommentById(startId);
+        if (!start) return [];
+
+        const visited = new Set([startId]);
+        const queue = [startId];
+        const result = [start];
+
+        while (queue.length > 0) {
+            const cur = queue.shift();
+            for (const link of this.commentLinks) {
+                let nextId = null;
+                if (link.fromCommentId === cur) nextId = link.toCommentId;
+                else if (link.toCommentId === cur) nextId = link.fromCommentId;
+                if (nextId !== null && !visited.has(nextId)) {
+                    visited.add(nextId);
+                    const next = this.getCommentById(nextId);
+                    if (next) {
+                        result.push(next);
+                        queue.push(nextId);
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     syncNextLinkId() {
@@ -754,13 +820,15 @@ class CommentManager {
     }
 
     /**
-     * Declaratively resolves all attached comment positions in topological order:
+     * Declaratively resolves all attached comment positions in bidirectional BFS order:
      * 1. Bubble-attached comments -> bubble + (offsetX, offsetY)
-     * 2. Comment-attached comments -> parentComment + (link.offsetX, link.offsetY)
+     * 2. Comment-attached comments -> follow their connected bubble-attached or dragged comment
+     *    in EITHER link direction (from -> to or to -> from) at their exact relative offset.
      * Skips SVG rendering completely when nothing moved (zero idle CPU/GPU cost).
      */
-    syncAttachedHierarchy(forceRender = false) {
-        if (this.comments.length === 0) return;
+    syncAttachedHierarchy(forceRender = false, activeRootCommentId = null) {
+        const movedComments = [];
+        if (this.comments.length === 0) return movedComments;
 
         let anyMoved = false;
 
@@ -787,78 +855,106 @@ class CommentManager {
                     comment.x = targetX;
                     comment.y = targetY;
                     this.updateElementPosition(comment);
+                    movedComments.push(comment);
                     anyMoved = true;
                 }
             }
         }
 
-        // 2. Resolve comment-to-comment chains deterministically via BFS from roots
+        // 2. Resolve comment-to-comment connections bidirectionally via BFS
         if (this.commentLinks.length > 0) {
-            // Map each child -> its primary parent link (if not bubble-attached and not currently dragged)
-            const primaryParent = new Map(); // childId -> link
-            const childrenOf = new Map();    // parentId -> [link, ...]
+            const adj = new Map(); // commentId -> [{ neighborId, dx, dy }]
 
             for (const link of this.commentLinks) {
-                const child = this.getCommentById(link.fromCommentId);
-                const parent = this.getCommentById(link.toCommentId);
-                if (!child || !parent) continue;
+                const fromC = this.getCommentById(link.fromCommentId);
+                const toC = this.getCommentById(link.toCommentId);
+                if (!fromC || !toC) continue;
 
                 // Ensure legacy links without stored offsets get initialized once
                 if (!Number.isFinite(Number(link.offsetX)) || !Number.isFinite(Number(link.offsetY))) {
-                    link.offsetX = Math.round((child.x - parent.x) * 100) / 100;
-                    link.offsetY = Math.round((child.y - parent.y) * 100) / 100;
+                    link.offsetX = Math.round((fromC.x - toC.x) * 100) / 100;
+                    link.offsetY = Math.round((fromC.y - toC.y) * 100) / 100;
                 }
 
-                if (child.attachedBubbleId === null && !child.isDragging && !primaryParent.has(child.id)) {
-                    primaryParent.set(child.id, link);
-                    if (!childrenOf.has(parent.id)) childrenOf.set(parent.id, []);
-                    childrenOf.get(parent.id).push(link);
-                }
+                if (!adj.has(toC.id)) adj.set(toC.id, []);
+                if (!adj.has(fromC.id)) adj.set(fromC.id, []);
+
+                // fromC = toC + (offsetX, offsetY)
+                adj.get(toC.id).push({ neighborId: fromC.id, dx: link.offsetX, dy: link.offsetY });
+                // toC = fromC + (-offsetX, -offsetY)
+                adj.get(fromC.id).push({ neighborId: toC.id, dx: -link.offsetX, dy: -link.offsetY });
             }
 
-            if (childrenOf.size > 0) {
+            if (adj.size > 0) {
                 const visited = new Set();
                 const queue = [];
 
-                // Start BFS from all roots (comments without a primary comment parent)
+                // Priority 1: Bubble-attached comments are fixed anchors that pull connected comments
                 for (const c of this.comments) {
-                    if (!primaryParent.has(c.id)) {
+                    if (c.attachedBubbleId !== null && adj.has(c.id) && !visited.has(c.id)) {
                         visited.add(c.id);
                         queue.push(c.id);
                     }
                 }
 
-                // Fallback in case of a pure cycle with no root
+                // Priority 2: Actively dragged comment (if not already visited) pulls its connected comments
+                if (activeRootCommentId !== null) {
+                    const rootId = Number(activeRootCommentId);
+                    if (adj.has(rootId) && !visited.has(rootId)) {
+                        visited.add(rootId);
+                        queue.push(rootId);
+                    }
+                }
                 for (const c of this.comments) {
+                    if (c.isDragging && adj.has(c.id) && !visited.has(c.id)) {
+                        visited.add(c.id);
+                        queue.push(c.id);
+                    }
+                }
+
+                // Priority 3: Remaining unattached connected components — pick most recently updated comment as root
+                const unvisitedLinked = this.comments
+                    .filter(c => adj.has(c.id) && !visited.has(c.id))
+                    .sort((a, b) => (b._lastRemoteUpdateAt || b._lastLocalEditAt || 0) - (a._lastRemoteUpdateAt || a._lastLocalEditAt || 0));
+
+                const runBfs = () => {
+                    while (queue.length > 0) {
+                        const curId = queue.shift();
+                        const cur = this.getCommentById(curId);
+                        const edges = adj.get(curId);
+                        if (!cur || !edges) continue;
+
+                        for (const edge of edges) {
+                            const nextId = edge.neighborId;
+                            if (visited.has(nextId)) continue;
+                            visited.add(nextId);
+
+                            const next = this.getCommentById(nextId);
+                            if (!next || next.isDragging || next.attachedBubbleId !== null) continue;
+
+                            const targetX = cur.x + edge.dx;
+                            const targetY = cur.y + edge.dy;
+                            if (Math.abs(targetX - next.x) > 0.01 || Math.abs(targetY - next.y) > 0.01) {
+                                next.x = targetX;
+                                next.y = targetY;
+                                this.updateElementPosition(next);
+                                movedComments.push(next);
+                                anyMoved = true;
+                            }
+                            queue.push(nextId);
+                        }
+                    }
+                };
+
+                // Run BFS from bubble anchors & dragged comments first
+                runBfs();
+
+                // Then resolve any remaining free-floating linked clusters
+                for (const c of unvisitedLinked) {
                     if (!visited.has(c.id)) {
                         visited.add(c.id);
                         queue.push(c.id);
-                    }
-                }
-
-                while (queue.length > 0) {
-                    const parentId = queue.shift();
-                    const parent = this.getCommentById(parentId);
-                    const childLinks = childrenOf.get(parentId);
-                    if (!parent || !childLinks) continue;
-
-                    for (const link of childLinks) {
-                        const childId = link.fromCommentId;
-                        if (visited.has(childId)) continue;
-                        visited.add(childId);
-
-                        const child = this.getCommentById(childId);
-                        if (!child || child.isDragging) continue;
-
-                        const targetX = parent.x + link.offsetX;
-                        const targetY = parent.y + link.offsetY;
-                        if (Math.abs(targetX - child.x) > 0.01 || Math.abs(targetY - child.y) > 0.01) {
-                            child.x = targetX;
-                            child.y = targetY;
-                            this.updateElementPosition(child);
-                            anyMoved = true;
-                        }
-                        queue.push(childId);
+                        runBfs();
                     }
                 }
             }
@@ -868,6 +964,8 @@ class CommentManager {
             this._connectionsDirty = false;
             this.renderConnections();
         }
+
+        return movedComments;
     }
 
     /**
