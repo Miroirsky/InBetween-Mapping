@@ -361,6 +361,14 @@ class ContextMenu {
                             </svg>
                             <span>Link</span>
                         </button>
+                        <button type="button" class="comment-type-btn" data-type="poll">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="20" x2="18" y2="10"></line>
+                                <line x1="12" y1="20" x2="12" y2="4"></line>
+                                <line x1="6" y1="20" x2="6" y2="14"></line>
+                            </svg>
+                            <span>Sondage</span>
+                        </button>
                     </div>
 
                     <div id="comment-fields-text" class="comment-fields-group">
@@ -370,6 +378,22 @@ class ContextMenu {
                     <div id="comment-fields-link" class="comment-fields-group" style="display: none;">
                         <input type="text" id="comment-modal-url" class="modal-input" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://example.com">
                         <input type="text" id="comment-modal-link-label" class="modal-input" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Display label (optional)">
+                    </div>
+
+                    <div id="comment-fields-poll" class="comment-fields-group" style="display: none;">
+                        <input type="text" id="comment-modal-poll-title" class="modal-input" maxlength="120" autocomplete="off" placeholder="Titre du sondage...">
+                        <div class="poll-modal-options-header">
+                            <span class="comment-color-label">Options</span>
+                            <button type="button" id="comment-modal-add-option" class="poll-add-option-btn">+ Ajouter</button>
+                        </div>
+                        <div id="comment-modal-poll-options" class="poll-modal-options-list"></div>
+                        <div class="poll-deadline-section">
+                            <label class="poll-deadline-toggle">
+                                <input type="checkbox" id="comment-modal-poll-has-deadline">
+                                <span>Date limite (heure locale)</span>
+                            </label>
+                            <input type="datetime-local" id="comment-modal-poll-deadline" class="modal-input poll-deadline-input" style="display: none;">
+                        </div>
                     </div>
 
                     <div class="comment-color-section">
@@ -393,9 +417,15 @@ class ContextMenu {
         this.commentTypeBtns = modal.querySelectorAll('.comment-type-btn');
         this.commentFieldsText = modal.querySelector('#comment-fields-text');
         this.commentFieldsLink = modal.querySelector('#comment-fields-link');
+        this.commentFieldsPoll = modal.querySelector('#comment-fields-poll');
         this.commentTextarea = modal.querySelector('#comment-modal-textarea');
         this.commentUrlInput = modal.querySelector('#comment-modal-url');
         this.commentLinkLabelInput = modal.querySelector('#comment-modal-link-label');
+        this.commentPollTitleInput = modal.querySelector('#comment-modal-poll-title');
+        this.commentPollOptionsList = modal.querySelector('#comment-modal-poll-options');
+        this.commentPollAddOptionBtn = modal.querySelector('#comment-modal-add-option');
+        this.commentPollHasDeadline = modal.querySelector('#comment-modal-poll-has-deadline');
+        this.commentPollDeadlineInput = modal.querySelector('#comment-modal-poll-deadline');
         this.commentSwatchesRow = modal.querySelector('#comment-modal-swatches');
         this.commentColorPicker = modal.querySelector('#comment-modal-color-picker');
         this.commentCancelBtn = modal.querySelector('#comment-modal-cancel-btn');
@@ -433,7 +463,16 @@ class ContextMenu {
     }
 
     /**
-     * Opens the comment creation / editing modal with Text & Link type selection and color picker.
+     * Formats an epoch ms timestamp into a local YYYY-MM-DDTHH:mm string for datetime-local inputs.
+     */
+    toLocalDateTimeInputValue(timestampMs) {
+        const d = new Date(timestampMs);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    /**
+     * Opens the comment creation / editing modal with Text, Link, and Poll type selection + color picker.
      */
     showCommentModal({ mode = 'create', comment = null, onSubmit }) {
         this.close();
@@ -444,7 +483,9 @@ class ContextMenu {
             ? cfg.presetColors
             : ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#ef4444', '#06b6d4', '#84cc16', '#334155', '#18181b'];
 
-        let selectedType = isEdit ? (comment.type === 'link' ? 'link' : 'text') : 'text';
+        let selectedType = isEdit
+            ? ((comment.type === 'link' || comment.type === 'poll') ? comment.type : 'text')
+            : 'text';
         let selectedColor = (isEdit && comment.color) ? comment.color : (cfg.defaultColor || '#f59e0b');
 
         this.commentModalTitle.textContent = isEdit ? 'Edit Comment' : 'Create Comment';
@@ -453,18 +494,99 @@ class ContextMenu {
         this.commentLinkLabelInput.value = isEdit && selectedType === 'link' ? (comment.text || '') : '';
         this.commentColorPicker.value = selectedColor;
 
+        // Populate Poll fields
+        const existingPoll = isEdit && comment.poll ? comment.poll : null;
+        this.commentPollTitleInput.value = existingPoll ? (existingPoll.title || comment.text || '') : '';
+
+        let pollOptionsState = existingPoll && Array.isArray(existingPoll.options) && existingPoll.options.length >= 2
+            ? existingPoll.options.map(o => ({ id: o.id, label: o.label || '' }))
+            : [
+                { id: `opt_${Date.now()}_1`, label: '' },
+                { id: `opt_${Date.now()}_2`, label: '' }
+            ];
+
+        const renderPollOptionInputs = () => {
+            this.commentPollOptionsList.innerHTML = '';
+            pollOptionsState.forEach((opt, idx) => {
+                const row = document.createElement('div');
+                row.className = 'poll-modal-option-row';
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'modal-input poll-option-input';
+                input.maxLength = 80;
+                input.autocomplete = 'off';
+                input.placeholder = `Option ${idx + 1}`;
+                input.value = opt.label;
+                input.addEventListener('input', (e) => {
+                    opt.label = e.target.value;
+                });
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        this.closeCommentModal();
+                    }
+                });
+                row.appendChild(input);
+
+                if (pollOptionsState.length > 2) {
+                    const delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.className = 'poll-remove-option-btn';
+                    delBtn.textContent = '×';
+                    delBtn.title = 'Supprimer cette option';
+                    delBtn.addEventListener('click', () => {
+                        pollOptionsState.splice(idx, 1);
+                        renderPollOptionInputs();
+                    });
+                    row.appendChild(delBtn);
+                }
+
+                this.commentPollOptionsList.appendChild(row);
+            });
+            this.commentPollAddOptionBtn.disabled = pollOptionsState.length >= 10;
+        };
+
+        renderPollOptionInputs();
+
+        this.commentPollAddOptionBtn.onclick = () => {
+            if (pollOptionsState.length >= 10) return;
+            pollOptionsState.push({ id: `opt_${Date.now()}_${pollOptionsState.length + 1}`, label: '' });
+            renderPollOptionInputs();
+            const inputs = this.commentPollOptionsList.querySelectorAll('input');
+            if (inputs.length > 0) inputs[inputs.length - 1].focus();
+        };
+
+        // Deadline checkbox & datetime-local input (local time)
+        const hasExistingDeadline = !!(existingPoll && existingPoll.deadline !== null && Number.isFinite(Number(existingPoll.deadline)));
+        this.commentPollHasDeadline.checked = hasExistingDeadline;
+        this.commentPollDeadlineInput.style.display = hasExistingDeadline ? 'block' : 'none';
+        this.commentPollDeadlineInput.value = hasExistingDeadline
+            ? this.toLocalDateTimeInputValue(existingPoll.deadline)
+            : this.toLocalDateTimeInputValue(Date.now() + 60 * 60 * 1000);
+
+        this.commentPollHasDeadline.onchange = (e) => {
+            const checked = e.target.checked;
+            this.commentPollDeadlineInput.style.display = checked ? 'block' : 'none';
+            if (checked && !this.commentPollDeadlineInput.value) {
+                this.commentPollDeadlineInput.value = this.toLocalDateTimeInputValue(Date.now() + 60 * 60 * 1000);
+            }
+        };
+
         const applyTypeUI = (type) => {
             selectedType = type;
             this.commentTypeBtns.forEach(btn => {
                 btn.classList.toggle('is-active', btn.dataset.type === type);
             });
+            this.commentFieldsText.style.display = type === 'text' ? 'flex' : 'none';
+            this.commentFieldsLink.style.display = type === 'link' ? 'flex' : 'none';
+            this.commentFieldsPoll.style.display = type === 'poll' ? 'flex' : 'none';
+
             if (type === 'link') {
-                this.commentFieldsText.style.display = 'none';
-                this.commentFieldsLink.style.display = 'flex';
                 setTimeout(() => this.commentUrlInput.focus(), 20);
+            } else if (type === 'poll') {
+                setTimeout(() => this.commentPollTitleInput.focus(), 20);
             } else {
-                this.commentFieldsText.style.display = 'flex';
-                this.commentFieldsLink.style.display = 'none';
                 setTimeout(() => this.commentTextarea.focus(), 20);
             }
         };
@@ -512,9 +634,9 @@ class ContextMenu {
                 }
                 this.closeCommentModal();
                 if (onSubmit) {
-                    onSubmit({ type: 'text', text: textVal, url: '', color: selectedColor });
+                    onSubmit({ type: 'text', text: textVal, url: '', color: selectedColor, poll: null });
                 }
-            } else {
+            } else if (selectedType === 'link') {
                 const urlVal = this.commentUrlInput.value.trim();
                 const labelVal = this.commentLinkLabelInput.value.trim();
                 if (!urlVal) {
@@ -525,7 +647,52 @@ class ContextMenu {
                 }
                 this.closeCommentModal();
                 if (onSubmit) {
-                    onSubmit({ type: 'link', text: labelVal, url: urlVal, color: selectedColor });
+                    onSubmit({ type: 'link', text: labelVal, url: urlVal, color: selectedColor, poll: null });
+                }
+            } else {
+                const pollTitle = this.commentPollTitleInput.value.trim();
+                if (!pollTitle) {
+                    this.commentPollTitleInput.focus();
+                    this.commentPollTitleInput.classList.add('input-error');
+                    setTimeout(() => this.commentPollTitleInput.classList.remove('input-error'), 400);
+                    return;
+                }
+
+                const cleanOptions = pollOptionsState
+                    .map(o => ({ id: o.id, label: (o.label || '').trim(), votes: {} }))
+                    .filter(o => o.label.length > 0);
+
+                if (cleanOptions.length < 2) {
+                    const firstEmpty = Array.from(this.commentPollOptionsList.querySelectorAll('input')).find(i => !i.value.trim());
+                    if (firstEmpty) {
+                        firstEmpty.focus();
+                        firstEmpty.classList.add('input-error');
+                        setTimeout(() => firstEmpty.classList.remove('input-error'), 400);
+                    }
+                    return;
+                }
+
+                let deadlineMs = null;
+                if (this.commentPollHasDeadline.checked && this.commentPollDeadlineInput.value) {
+                    const parsedDate = new Date(this.commentPollDeadlineInput.value).getTime();
+                    if (Number.isFinite(parsedDate) && parsedDate > 0) {
+                        deadlineMs = parsedDate;
+                    }
+                }
+
+                const pollPayload = {
+                    title: pollTitle,
+                    options: cleanOptions,
+                    deadline: deadlineMs,
+                    isClosed: existingPoll ? !!existingPoll.isClosed : false,
+                    creatorId: existingPoll && existingPoll.creatorId
+                        ? existingPoll.creatorId
+                        : (this.commentManager ? this.commentManager.getCurrentVoterId() : 'local')
+                };
+
+                this.closeCommentModal();
+                if (onSubmit) {
+                    onSubmit({ type: 'poll', text: pollTitle, url: '', color: selectedColor, poll: pollPayload });
                 }
             }
         });
@@ -612,14 +779,15 @@ class ContextMenu {
                     if (!this.commentManager) return;
                     this.showCommentModal({
                         mode: 'create',
-                        onSubmit: ({ type, text, url, color }) => {
+                        onSubmit: ({ type, text, url, color, poll }) => {
                             this.commentManager.createComment({
                                 x: boardX,
                                 y: boardY,
                                 type,
                                 text,
                                 url,
-                                color
+                                color,
+                                poll
                             });
                         }
                     });
@@ -1101,8 +1269,8 @@ class ContextMenu {
                     this.showCommentModal({
                         mode: 'edit',
                         comment,
-                        onSubmit: ({ type, text, url, color }) => {
-                            this.commentManager.updateComment(commentId, { type, text, url, color });
+                        onSubmit: ({ type, text, url, color, poll }) => {
+                            this.commentManager.updateComment(commentId, { type, text, url, color, poll });
                         }
                     });
                 }
@@ -1121,6 +1289,20 @@ class ContextMenu {
                 `,
                 action: () => {
                     this.commentManager.openCommentLink(commentId);
+                }
+            });
+        }
+
+        if (comment.type === 'poll' && !this.commentManager.isPollEnded(comment) && this.commentManager.isPollCreator(comment)) {
+            items.push({
+                label: 'Terminer le sondage',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                    </svg>
+                `,
+                action: () => {
+                    this.commentManager.endPoll(commentId);
                 }
             });
         }
@@ -1174,7 +1356,9 @@ class ContextMenu {
             }
         });
 
-        const title = comment.type === 'link' ? 'Link Comment' : 'Text Comment';
+        const title = comment.type === 'poll'
+            ? 'Sondage'
+            : (comment.type === 'link' ? 'Link Comment' : 'Text Comment');
         this.renderMenu(title, items, x, y);
     }
 

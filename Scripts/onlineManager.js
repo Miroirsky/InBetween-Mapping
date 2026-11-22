@@ -184,6 +184,7 @@ class OnlineManager {
             text: comment.text || '',
             url: comment.url || '',
             color: comment.color,
+            poll: comment.poll || null,
             x: comment.x,
             y: comment.y,
             attachedBubbleId: comment.attachedBubbleId !== undefined ? comment.attachedBubbleId : null,
@@ -810,11 +811,15 @@ class OnlineManager {
                             }
                         }
 
-                        if (local.type !== rc.type || local.text !== rc.text || local.url !== rc.url || local.color !== rc.color) {
+                        const remotePollJson = rc.poll ? JSON.stringify(rc.poll) : '';
+                        const localPollJson = local.poll ? JSON.stringify(local.poll) : '';
+
+                        if (local.type !== rc.type || local.text !== rc.text || local.url !== rc.url || local.color !== rc.color || localPollJson !== remotePollJson) {
                             local.type = rc.type;
                             local.text = rc.text;
                             local.url = rc.url;
                             local.color = rc.color;
+                            local.poll = rc.poll ? this.commentManager.normalizePollData(rc.poll, rc.text) : null;
                             this.commentManager.applyCommentContent(local);
                             this.commentManager.applyCommentStyle(local);
                         }
@@ -826,6 +831,7 @@ class OnlineManager {
                             text: rc.text,
                             url: rc.url,
                             color: rc.color,
+                            poll: rc.poll || null,
                             attachedBubbleId: rc.attachedBubbleId,
                             offsetX: rc.offsetX,
                             offsetY: rc.offsetY,
@@ -1052,11 +1058,14 @@ class OnlineManager {
                         this.commentManager.updateElementPosition(local);
                     }
                 }
-                if (local.type !== clean.type || local.text !== clean.text || local.url !== clean.url || local.color !== clean.color) {
+                const cleanPollJson = clean.poll ? JSON.stringify(clean.poll) : '';
+                const localPollJson = local.poll ? JSON.stringify(local.poll) : '';
+                if (local.type !== clean.type || local.text !== clean.text || local.url !== clean.url || local.color !== clean.color || localPollJson !== cleanPollJson) {
                     local.type = clean.type;
                     local.text = clean.text;
                     local.url = clean.url;
                     local.color = clean.color;
+                    local.poll = clean.poll ? this.commentManager.normalizePollData(clean.poll, clean.text) : null;
                     this.commentManager.applyCommentContent(local);
                     this.commentManager.applyCommentStyle(local);
                 }
@@ -1069,6 +1078,7 @@ class OnlineManager {
                     text: clean.text,
                     url: clean.url,
                     color: clean.color,
+                    poll: clean.poll || null,
                     attachedBubbleId: clean.attachedBubbleId,
                     offsetX: clean.offsetX,
                     offsetY: clean.offsetY,

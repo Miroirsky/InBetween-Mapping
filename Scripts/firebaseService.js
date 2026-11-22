@@ -170,7 +170,7 @@ class FirebaseService {
         }
 
         const id = Math.floor(rawId);
-        const type = c.type === 'link' ? 'link' : 'text';
+        const type = (c.type === 'link' || c.type === 'poll') ? c.type : 'text';
         const attachedRaw = c.attachedBubbleId !== undefined && c.attachedBubbleId !== null && c.attachedBubbleId !== ''
             ? Number(c.attachedBubbleId)
             : null;
@@ -180,7 +180,40 @@ class FirebaseService {
         const offsetX = Number.isFinite(Number(c.offsetX)) ? Math.round(Number(c.offsetX) * 100) / 100 : 0;
         const offsetY = Number.isFinite(Number(c.offsetY)) ? Math.round(Number(c.offsetY) * 100) / 100 : 0;
 
-        return {
+        let poll = null;
+        if (type === 'poll' && c.poll && typeof c.poll === 'object') {
+            const rawOptions = Array.isArray(c.poll.options)
+                ? c.poll.options
+                : (c.poll.options && typeof c.poll.options === 'object' ? Object.values(c.poll.options) : []);
+            const cleanOptions = rawOptions
+                .filter(o => o && typeof o === 'object')
+                .map((o, idx) => {
+                    const cleanVotes = {};
+                    if (o.votes && typeof o.votes === 'object') {
+                        for (const [vk, vv] of Object.entries(o.votes)) {
+                            if (vk && vv) cleanVotes[String(vk)] = true;
+                        }
+                    }
+                    return {
+                        id: (o.id && typeof o.id === 'string') ? o.id : `opt_${idx + 1}`,
+                        label: (typeof o.label === 'string' && o.label.trim()) ? o.label.trim() : `Option ${idx + 1}`,
+                        votes: cleanVotes
+                    };
+                });
+
+            const rawDeadline = c.poll.deadline !== undefined && c.poll.deadline !== null && c.poll.deadline !== ''
+                ? Number(c.poll.deadline)
+                : null;
+            poll = {
+                title: (typeof c.poll.title === 'string' && c.poll.title.trim()) ? c.poll.title.trim() : ((typeof c.text === 'string' && c.text.trim()) ? c.text.trim() : 'Sondage'),
+                options: cleanOptions,
+                deadline: (rawDeadline !== null && Number.isFinite(rawDeadline) && rawDeadline > 0) ? Math.floor(rawDeadline) : null,
+                isClosed: !!c.poll.isClosed,
+                creatorId: (typeof c.poll.creatorId === 'string' && c.poll.creatorId.trim()) ? c.poll.creatorId.trim() : 'local'
+            };
+        }
+
+        const res = {
             id,
             type,
             text: (typeof c.text === 'string') ? c.text.trim() : '',
@@ -194,6 +227,12 @@ class FirebaseService {
             updatedBy: (c.updatedBy && typeof c.updatedBy === 'string') ? c.updatedBy : 'peer',
             updatedAt: Number.isFinite(Number(c.updatedAt)) ? Number(c.updatedAt) : Date.now()
         };
+
+        if (poll) {
+            res.poll = poll;
+        }
+
+        return res;
     }
 
     /**

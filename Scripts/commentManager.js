@@ -29,7 +29,212 @@ class CommentManager {
         this.hoveredBorderInfo = null; // { comment, edgeX, edgeY, localX, localY, side }
         this.connectingState = null;   // { comment, startX, startY, targetInfo }
 
+        this.localUserId = this.initLocalUserId();
+        this.pollTimerInterval = null;
+
         this.initSVG();
+        this.startPollTimer();
+    }
+
+    initLocalUserId() {
+        const key = 'inbetween_mapping_local_user_id';
+        try {
+            let id = localStorage.getItem(key);
+            if (!id) {
+                id = `local_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
+                localStorage.setItem(key, id);
+            }
+            return id;
+        } catch (e) {
+            return `local_${Math.random().toString(36).slice(2, 10)}`;
+        }
+    }
+
+    getCurrentVoterId() {
+        if (this.onlineManager && this.onlineManager.isOnline && this.onlineManager.user && this.onlineManager.user.id) {
+            return this.onlineManager.user.id;
+        }
+        return this.localUserId;
+    }
+
+    isPollCreator(comment) {
+        if (!comment || !comment.poll) return false;
+        const creatorId = comment.poll.creatorId;
+        if (!creatorId) return true;
+        if (creatorId === this.localUserId) return true;
+        if (this.onlineManager && this.onlineManager.user && creatorId === this.onlineManager.user.id) return true;
+        return false;
+    }
+
+    isPollEnded(comment) {
+        if (!comment || comment.type !== 'poll' || !comment.poll) return false;
+        if (comment.poll.isClosed) return true;
+        if (comment.poll.deadline !== null && Number.isFinite(Number(comment.poll.deadline))) {
+            return Date.now() >= Number(comment.poll.deadline);
+        }
+        return false;
+    }
+
+    formatRemainingTime(deadlineMs) {
+        const diff = Math.max(0, Number(deadlineMs) - Date.now());
+        if (diff <= 0) return 'Terminé';
+        const totalSec = Math.ceil(diff / 1000);
+        const days = Math.floor(totalSec / 86400);
+        const hours = Math.floor((totalSec % 86400) / 3600);
+        const mins = Math.floor((totalSec % 3600) / 60);
+        const secs = totalSec % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+
+        if (days > 0) {
+            return `${days}j ${pad(hours)}h ${pad(mins)}m ${pad(secs)}s`;
+        }
+        if (hours > 0) {
+            return `${hours}h ${pad(mins)}m ${pad(secs)}s`;
+        }
+        if (mins > 0) {
+            return `${mins}m ${pad(secs)}s`;
+        }
+        return `${secs}s`;
+    }
+
+    normalizePollData(pollInput, fallbackTitle = '') {
+        if (!pollInput || typeof pollInput !== 'object') {
+            return {
+                title: fallbackTitle || 'Sondage',
+                options: [
+                    { id: 'opt_1', label: 'Option 1', votes: {} },
+                    { id: 'opt_2', label: 'Option 2', votes: {} }
+                ],
+                deadline: null,
+                isClosed: false,
+                creatorId: this.getCurrentVoterId()
+            };
+        }
+
+        const rawOptions = Array.isArray(pollInput.options)
+            ? pollInput.options
+            : (pollInput.options && typeof pollInput.options === 'object' ? Object.values(pollInput.options) : []);
+
+        const options = rawOptions
+            .filter(o => o && (typeof o === 'string' || typeof o === 'object'))
+            .map((o, idx) => {
+                if (typeof o === 'string') {
+                    return { id: `opt_${idx + 1}`, label: o.trim() || `Option ${idx + 1}`, votes: {} };
+                }
+                const cleanVotes = {};
+                if (o.votes && typeof o.votes === 'object') {
+                    for (const [vk, vv] of Object.entries(o.votes)) {
+                        if (vk && vv) cleanVotes[String(vk)] = true;
+                    }
+                }
+                return {
+                    id: (o.id && typeof o.id === 'string') ? o.id : `opt_${idx + 1}`,
+                    label: (typeof o.label === 'string' && o.label.trim()) ? o.label.trim() : `Option ${idx + 1}`,
+                    votes: cleanVotes
+                };
+            });
+
+        while (options.length < 2) {
+            options.push({ id: `opt_${options.length + 1}`, label: `Option ${options.length + 1}`, votes: {} });
+        }
+
+        const rawDeadline = pollInput.deadline !== undefined && pollInput.deadline !== null && pollInput.deadline !== ''
+            ? Number(pollInput.deadline)
+            : null;
+
+        return {
+            title: (typeof pollInput.title === 'string' && pollInput.title.trim()) ? pollInput.title.trim() : (fallbackTitle || 'Sondage'),
+            options,
+            deadline: (rawDeadline !== null && Number.isFinite(rawDeadline) && rawDeadline > 0) ? Math.floor(rawDeadline) : null,
+            isClosed: !!pollInput.isClosed,
+            creatorId: (typeof pollInput.creatorId === 'string' && pollInput.creatorId.trim()) ? pollInput.creatorId.trim() : this.getCurrentVoterId()
+        };
+    }
+
+    /**
+     * Lightweight 1-second ticker to update real-time countdowns on active timed polls
+     * and transition expired polls to their finished state automatically.
+     */
+    startPollTimer() {
+        if (this.pollTimerInterval) clearInterval(this.pollTimerInterval);
+        this.pollTimerInterval = setInterval(() => {
+            if (this.comments.length === 0) return;
+            const now = Date.now();
+            for (const comment of this.comments) {
+                if (comment.type !== 'poll' || !comment.poll) continue;
+                if (comment.poll.isClosed || comment.poll.deadline === null) continue;
+
+                if (now >= comment.poll.deadline) {
+                    if (!comment._renderedEnded) {
+                        this.applyCommentContent(comment);
+                        this.renderConnections();
+                    }
+                } else if (comment.timerElement) {
+                    comment.timerElement.textContent = this.formatRemainingTime(comment.poll.deadline);
+                }
+            }
+        }, 1000);
+    }
+
+    /**
+     * Toggles or switches the current user's vote on a poll option.
+     */
+    votePoll(commentId, optionId) {
+        const comment = this.getCommentById(commentId);
+        if (!comment || comment.type !== 'poll' || !comment.poll) return false;
+        if (this.isPollEnded(comment)) return false;
+
+        const voterId = this.getCurrentVoterId();
+        const targetOpt = comment.poll.options.find(o => o.id === optionId);
+        if (!targetOpt) return false;
+
+        const alreadyVotedThis = !!(targetOpt.votes && targetOpt.votes[voterId]);
+
+        // Single-choice voting: remove voter from all options first
+        for (const opt of comment.poll.options) {
+            if (opt.votes && opt.votes[voterId]) {
+                delete opt.votes[voterId];
+            }
+        }
+
+        // Toggle vote if clicking a new option
+        if (!alreadyVotedThis) {
+            if (!targetOpt.votes) targetOpt.votes = {};
+            targetOpt.votes[voterId] = true;
+        }
+
+        this.applyCommentContent(comment);
+        this.renderConnections();
+
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentUpdated(comment);
+        }
+        if (this.savingManager) {
+            this.savingManager.saveSessionSnapshot();
+        }
+        return true;
+    }
+
+    /**
+     * Manually ends a poll (allowed for the creator even if a deadline is set).
+     */
+    endPoll(commentId) {
+        const comment = this.getCommentById(commentId);
+        if (!comment || comment.type !== 'poll' || !comment.poll) return false;
+        if (!this.isPollCreator(comment)) return false;
+        if (comment.poll.isClosed) return false;
+
+        comment.poll.isClosed = true;
+        this.applyCommentContent(comment);
+        this.renderConnections();
+
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentUpdated(comment);
+        }
+        if (this.savingManager) {
+            this.savingManager.saveSessionSnapshot();
+        }
+        return true;
     }
 
     setSavingManager(savingManager) {
@@ -146,6 +351,7 @@ class CommentManager {
         text = '',
         url = '',
         color = null,
+        poll = null,
         attachedBubbleId = null,
         offsetX = 0,
         offsetY = 0,
@@ -157,18 +363,20 @@ class CommentManager {
         const hasValidCustomId = customId !== null && customId !== undefined && Number.isFinite(Number(customId)) && Number(customId) > 0;
         const id = hasValidCustomId ? Math.floor(Number(customId)) : this.nextId;
 
-        const commentType = type === 'link' ? 'link' : 'text';
+        const commentType = (type === 'link' || type === 'poll') ? type : 'text';
         const commentColor = color || this.config.defaultColor || '#f59e0b';
         const normalizedUrl = commentType === 'link' ? this.normalizeUrl(url) : '';
         const cleanText = typeof text === 'string' ? text.trim() : '';
+        const normalizedPoll = commentType === 'poll' ? this.normalizePollData(poll, cleanText) : null;
 
         // Prevent duplicate comment DOM elements if ID already exists
         const existing = this.getCommentById(id);
         if (existing) {
             existing.type = commentType;
-            existing.text = cleanText;
+            existing.text = commentType === 'poll' ? normalizedPoll.title : cleanText;
             existing.url = normalizedUrl;
             existing.color = commentColor;
+            existing.poll = normalizedPoll;
             existing.x = Number.isFinite(Number(x)) ? Number(x) : existing.x;
             existing.y = Number.isFinite(Number(y)) ? Number(y) : existing.y;
             existing.attachedBubbleId = (attachedBubbleId !== null && attachedBubbleId !== undefined && Number.isFinite(Number(attachedBubbleId)))
@@ -207,9 +415,10 @@ class CommentManager {
         const comment = {
             id,
             type: commentType,
-            text: cleanText,
+            text: commentType === 'poll' ? normalizedPoll.title : cleanText,
             url: normalizedUrl,
             color: commentColor,
+            poll: normalizedPoll,
             x: Number.isFinite(Number(x)) ? Number(x) : 500,
             y: Number.isFinite(Number(y)) ? Number(y) : 500,
             attachedBubbleId: (attachedBubbleId !== null && attachedBubbleId !== undefined && Number.isFinite(Number(attachedBubbleId)))
@@ -220,7 +429,9 @@ class CommentManager {
             isDragging: false,
             element: el,
             contentElement: contentEl,
-            dotElement: dotEl
+            dotElement: dotEl,
+            timerElement: null,
+            _renderedEnded: false
         };
 
         // If attached to a bubble and offsets weren't explicitly provided, compute them
@@ -270,12 +481,140 @@ class CommentManager {
         const el = comment.element;
         const contentEl = comment.contentElement;
 
-        el.classList.remove('comment-type-text', 'comment-type-link');
+        el.classList.remove('comment-type-text', 'comment-type-link', 'comment-type-poll', 'poll-is-ended');
         el.classList.add(`comment-type-${comment.type}`);
+        comment.timerElement = null;
 
         contentEl.innerHTML = '';
 
-        if (comment.type === 'link') {
+        if (comment.type === 'poll' && comment.poll) {
+            const poll = comment.poll;
+            const ended = this.isPollEnded(comment);
+            comment._renderedEnded = ended;
+            if (ended) el.classList.add('poll-is-ended');
+
+            const voterId = this.getCurrentVoterId();
+            const isCreator = this.isPollCreator(comment);
+
+            let totalVotes = 0;
+            let maxVotes = 0;
+            for (const opt of poll.options) {
+                const count = opt.votes ? Object.keys(opt.votes).length : 0;
+                totalVotes += count;
+                if (count > maxVotes) maxVotes = count;
+            }
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'poll-card-inner';
+
+            // Header: title + status/timer badge
+            const header = document.createElement('div');
+            header.className = 'poll-header';
+
+            const titleRow = document.createElement('div');
+            titleRow.className = 'poll-title-row';
+            titleRow.innerHTML = `
+                <svg class="poll-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="20" x2="18" y2="10"></line>
+                    <line x1="12" y1="20" x2="12" y2="4"></line>
+                    <line x1="6" y1="20" x2="6" y2="14"></line>
+                </svg>
+            `;
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'poll-title';
+            titleSpan.textContent = poll.title || comment.text || 'Sondage';
+            titleRow.appendChild(titleSpan);
+            header.appendChild(titleRow);
+
+            if (ended || poll.deadline !== null) {
+                const badge = document.createElement('span');
+                badge.className = `poll-status-badge ${ended ? 'is-ended' : 'is-timed'}`;
+                if (ended) {
+                    badge.textContent = 'Terminé';
+                } else {
+                    badge.textContent = this.formatRemainingTime(poll.deadline);
+                    comment.timerElement = badge;
+                }
+                header.appendChild(badge);
+            }
+
+            wrapper.appendChild(header);
+
+            // Options list
+            const optionsList = document.createElement('div');
+            optionsList.className = 'poll-options-list';
+
+            for (const opt of poll.options) {
+                const count = opt.votes ? Object.keys(opt.votes).length : 0;
+                const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+                const isUserVote = !!(opt.votes && opt.votes[voterId]);
+                const isWinner = ended && maxVotes > 0 && count === maxVotes;
+
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = `poll-option-btn${isUserVote ? ' is-voted' : ''}${isWinner ? ' is-winner' : ''}`;
+                btn.disabled = ended;
+                btn.title = ended ? `${opt.label} — ${count} vote${count > 1 ? 's' : ''} (${pct}%)` : `Voter pour "${opt.label}"`;
+
+                const fill = document.createElement('span');
+                fill.className = 'poll-option-fill';
+                fill.style.width = `${pct}%`;
+
+                const textWrap = document.createElement('span');
+                textWrap.className = 'poll-option-row';
+
+                const labelSpan = document.createElement('span');
+                labelSpan.className = 'poll-option-label';
+                labelSpan.textContent = opt.label;
+
+                const metaSpan = document.createElement('span');
+                metaSpan.className = 'poll-option-meta';
+                metaSpan.textContent = `${pct}% (${count})`;
+
+                textWrap.appendChild(labelSpan);
+                textWrap.appendChild(metaSpan);
+
+                btn.appendChild(fill);
+                btn.appendChild(textWrap);
+
+                if (!ended) {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.votePoll(comment.id, opt.id);
+                    });
+                }
+
+                optionsList.appendChild(btn);
+            }
+
+            wrapper.appendChild(optionsList);
+
+            // Footer: total votes + creator End Poll button
+            const footer = document.createElement('div');
+            footer.className = 'poll-footer';
+
+            const votesInfo = document.createElement('span');
+            votesInfo.className = 'poll-total-votes';
+            votesInfo.textContent = `${totalVotes} vote${totalVotes > 1 ? 's' : ''}`;
+            footer.appendChild(votesInfo);
+
+            if (!ended && isCreator) {
+                const endBtn = document.createElement('button');
+                endBtn.type = 'button';
+                endBtn.className = 'poll-end-btn';
+                endBtn.textContent = 'Terminer';
+                endBtn.title = 'Terminer le sondage maintenant';
+                endBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.endPoll(comment.id);
+                });
+                footer.appendChild(endBtn);
+            }
+
+            wrapper.appendChild(footer);
+            contentEl.appendChild(wrapper);
+            el.title = '';
+        } else if (comment.type === 'link') {
             const displayLabel = comment.text || this.formatDisplayUrl(comment.url) || 'Link';
 
             const iconSpan = document.createElement('span');
@@ -358,18 +697,38 @@ class CommentManager {
     /**
      * Updates an existing comment's content, type, url, or color.
      */
-    updateComment(id, { type, text, url, color }) {
+    updateComment(id, { type, text, url, color, poll }) {
         const comment = this.getCommentById(id);
         if (!comment) return false;
 
-        if (type === 'text' || type === 'link') {
+        if (type === 'text' || type === 'link' || type === 'poll') {
             comment.type = type;
         }
-        if (text !== undefined) {
-            comment.text = typeof text === 'string' ? text.trim() : '';
-        }
-        if (url !== undefined) {
-            comment.url = comment.type === 'link' ? this.normalizeUrl(url) : '';
+        if (comment.type === 'poll') {
+            const prevPoll = comment.poll;
+            const normalized = this.normalizePollData(poll || prevPoll, text !== undefined ? text : comment.text);
+            // Preserve existing creatorId & votes for unchanged option IDs when editing
+            if (prevPoll) {
+                normalized.creatorId = prevPoll.creatorId || normalized.creatorId;
+                const prevMap = new Map((prevPoll.options || []).map(o => [o.id, o]));
+                normalized.options.forEach(opt => {
+                    const old = prevMap.get(opt.id);
+                    if (old && old.votes && Object.keys(opt.votes || {}).length === 0) {
+                        opt.votes = Object.assign({}, old.votes);
+                    }
+                });
+            }
+            comment.poll = normalized;
+            comment.text = normalized.title;
+            comment.url = '';
+        } else {
+            comment.poll = null;
+            if (text !== undefined) {
+                comment.text = typeof text === 'string' ? text.trim() : '';
+            }
+            if (url !== undefined) {
+                comment.url = comment.type === 'link' ? this.normalizeUrl(url) : '';
+            }
         }
         if (color) {
             comment.color = color;
@@ -1555,18 +1914,34 @@ class CommentManager {
     serializeComments() {
         return this.comments
             .filter(c => c && Number.isFinite(Number(c.id)) && Number(c.id) > 0)
-            .map(c => ({
-                id: Math.floor(Number(c.id)),
-                type: c.type === 'link' ? 'link' : 'text',
-                text: c.text || '',
-                url: c.url || '',
-                color: c.color || this.config.defaultColor || '#f59e0b',
-                x: Math.round(c.x * 100) / 100,
-                y: Math.round(c.y * 100) / 100,
-                attachedBubbleId: c.attachedBubbleId !== null ? Math.floor(Number(c.attachedBubbleId)) : null,
-                offsetX: Math.round((c.offsetX || 0) * 100) / 100,
-                offsetY: Math.round((c.offsetY || 0) * 100) / 100
-            }));
+            .map(c => {
+                const base = {
+                    id: Math.floor(Number(c.id)),
+                    type: (c.type === 'link' || c.type === 'poll') ? c.type : 'text',
+                    text: c.text || '',
+                    url: c.url || '',
+                    color: c.color || this.config.defaultColor || '#f59e0b',
+                    x: Math.round(c.x * 100) / 100,
+                    y: Math.round(c.y * 100) / 100,
+                    attachedBubbleId: c.attachedBubbleId !== null ? Math.floor(Number(c.attachedBubbleId)) : null,
+                    offsetX: Math.round((c.offsetX || 0) * 100) / 100,
+                    offsetY: Math.round((c.offsetY || 0) * 100) / 100
+                };
+                if (c.type === 'poll' && c.poll) {
+                    base.poll = {
+                        title: c.poll.title || c.text || 'Sondage',
+                        options: (c.poll.options || []).map(o => ({
+                            id: o.id,
+                            label: o.label,
+                            votes: o.votes ? Object.assign({}, o.votes) : {}
+                        })),
+                        deadline: c.poll.deadline !== null && Number.isFinite(Number(c.poll.deadline)) ? Math.floor(Number(c.poll.deadline)) : null,
+                        isClosed: !!c.poll.isClosed,
+                        creatorId: c.poll.creatorId || this.localUserId
+                    };
+                }
+                return base;
+            });
     }
 
     /**
@@ -1585,6 +1960,7 @@ class CommentManager {
                 text: c.text || '',
                 url: c.url || '',
                 color: c.color || null,
+                poll: c.poll || null,
                 attachedBubbleId: c.attachedBubbleId !== undefined ? c.attachedBubbleId : null,
                 offsetX: c.offsetX || 0,
                 offsetY: c.offsetY || 0,

@@ -1264,14 +1264,17 @@ class InteractionManager {
         window.addEventListener('dblclick', (e) => {
             const commentEl = e.target.closest('.board-comment');
             if (commentEl && this.commentManager) {
+                if (e.target.closest('.poll-option-btn, .poll-end-btn')) {
+                    return;
+                }
                 const commentId = Number(commentEl.dataset.id);
                 const comment = this.commentManager.getCommentById(commentId);
                 if (comment) {
                     this.contextMenu.showCommentModal({
                         mode: 'edit',
                         comment,
-                        onSubmit: ({ type, text, url, color }) => {
-                            this.commentManager.updateComment(commentId, { type, text, url, color });
+                        onSubmit: ({ type, text, url, color, poll }) => {
+                            this.commentManager.updateComment(commentId, { type, text, url, color, poll });
                         }
                     });
                     return;

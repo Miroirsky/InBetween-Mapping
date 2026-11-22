@@ -3202,7 +3202,7 @@ body.is-connecting-comment * {
 
 .comment-type-selector {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 6px;
     padding: 4px;
     background: rgba(255, 255, 255, 0.05);
@@ -3516,4 +3516,289 @@ body.is-connecting-comment * {
 .params-save-del-btn:hover {
     background: rgba(239, 68, 68, 0.2);
     color: #f87171;
+}
+
+/* ==================================================================
+   Poll Comments (Sondages)
+   ================================================================== */
+.board-comment.comment-type-poll {
+    min-width: 215px;
+    max-width: 295px;
+    padding: 10px 12px;
+}
+
+.board-comment.comment-type-poll .comment-content {
+    display: block;
+    pointer-events: auto;
+}
+
+.poll-card-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.poll-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.poll-title-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+}
+
+.poll-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+    opacity: 0.88;
+}
+
+.poll-title {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+.poll-status-badge {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 999px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    background: rgba(0, 0, 0, 0.25);
+    color: inherit;
+    border: 1px solid currentColor;
+    opacity: 0.9;
+}
+
+.poll-status-badge.is-ended {
+    background: rgba(0, 0, 0, 0.42);
+    opacity: 0.85;
+}
+
+.poll-options-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.poll-option-btn {
+    position: relative;
+    width: 100%;
+    padding: 6px 9px;
+    border-radius: 6px;
+    border: 1px solid rgba(0, 0, 0, 0.22);
+    background: rgba(0, 0, 0, 0.16);
+    color: inherit;
+    font-family: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+    transition: border-color 0.14s ease, background 0.14s ease, transform 0.1s ease;
+}
+
+.poll-option-btn:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.24);
+    border-color: currentColor;
+}
+
+.poll-option-btn:active:not(:disabled) {
+    transform: scale(0.99);
+}
+
+.poll-option-btn:disabled {
+    cursor: default;
+    opacity: 0.92;
+}
+
+.poll-option-btn.is-voted {
+    border-color: currentColor;
+    box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.poll-option-btn.is-winner {
+    border-color: currentColor;
+    box-shadow: inset 0 0 0 1.5px currentColor;
+    font-weight: 700;
+}
+
+.poll-option-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    background: currentColor;
+    opacity: 0.2;
+    transition: width 0.22s ease;
+    pointer-events: none;
+}
+
+.poll-option-btn.is-voted .poll-option-fill,
+.poll-option-btn.is-winner .poll-option-fill {
+    opacity: 0.3;
+}
+
+.poll-option-row {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.poll-option-label {
+    font-weight: 600;
+    word-break: break-word;
+    flex: 1;
+}
+
+.poll-option-meta {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    opacity: 0.88;
+}
+
+.poll-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 2px;
+    font-size: 11px;
+}
+
+.poll-total-votes {
+    font-weight: 600;
+    opacity: 0.8;
+}
+
+.poll-end-btn {
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid currentColor;
+    background: rgba(0, 0, 0, 0.22);
+    color: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.14s ease, transform 0.1s ease;
+}
+
+.poll-end-btn:hover {
+    background: rgba(0, 0, 0, 0.38);
+}
+
+.poll-end-btn:active {
+    transform: scale(0.96);
+}
+
+/* Poll Modal Controls */
+.poll-modal-options-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 2px;
+}
+
+.poll-add-option-btn {
+    padding: 3px 9px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border-radius: 6px;
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    background: rgba(56, 189, 248, 0.16);
+    color: #7dd3fc;
+    cursor: pointer;
+    transition: background 0.14s ease, color 0.14s ease;
+}
+
+.poll-add-option-btn:hover:not(:disabled) {
+    background: rgba(56, 189, 248, 0.3);
+    color: #ffffff;
+}
+
+.poll-add-option-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.poll-modal-options-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 155px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.poll-modal-option-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.poll-option-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.poll-remove-option-btn {
+    width: 28px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    color: #94a3b8;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.14s ease, color 0.14s ease;
+}
+
+.poll-remove-option-btn:hover {
+    background: rgba(239, 68, 68, 0.22);
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.4);
+}
+
+.poll-deadline-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.poll-deadline-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #cbd5e1;
+    cursor: pointer;
+    user-select: none;
+}
+
+.poll-deadline-toggle input[type="checkbox"] {
+    accent-color: #38bdf8;
+    cursor: pointer;
+}
+
+.poll-deadline-input {
+    color-scheme: dark;
 }
