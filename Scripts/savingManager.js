@@ -273,6 +273,7 @@ class SavingManager {
                 color: b.color || '#000000',
                 x: Math.round(b.x * 100) / 100,
                 y: Math.round(b.y * 100) / 100,
+                scale: Number.isFinite(Number(b.scale)) ? Number(b.scale) : 1.0,
                 isLocked: !!b.isLocked
             }));
 
@@ -344,7 +345,7 @@ class SavingManager {
                     this.bubbleManager.clearBoard();
 
                     session.bubbles.forEach(b => {
-                        this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked);
+                        this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked, b.scale);
                     });
 
                     if (this.connectionManager && Array.isArray(session.connections)) {
@@ -574,7 +575,7 @@ class SavingManager {
         // 2. Recreate bubbles
         if (Array.isArray(record.bubbles)) {
             record.bubbles.forEach(b => {
-                this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked);
+                this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked, b.scale);
             });
         }
 

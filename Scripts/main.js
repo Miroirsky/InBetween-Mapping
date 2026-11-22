@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let viewMenu = null;
     if (window.ViewMenu && savingManager && paramsManager) {
-        viewMenu = new window.ViewMenu(savingManager, paramsManager, interactionManager, exportManager);
+        viewMenu = new window.ViewMenu(savingManager, paramsManager, interactionManager, exportManager, null, connectionManager);
     }
 
     // 7. Firebase & Online Multiplayer Room Setup

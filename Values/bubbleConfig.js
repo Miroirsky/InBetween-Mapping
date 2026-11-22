@@ -19,6 +19,14 @@ const BubbleConfig = {
     outlineSizePercent: 5.0,
 
     /**
+     * Bubble resizing snap step as a percentage of the default bubble's size.
+     * 20 = snaps to 20% increments of the default bubble size (20%, 40%, 60%, 80%, 100%, 120%, ...).
+     */
+    sizeSnapPercent: 25,
+    minScale: 0.2,
+    maxScale: 4.0,
+
+    /**
      * Desired distance / spacing between bubbles, in units of bubble diameter.
      * 1.0 = exactly 1 bubble distance (a gap of 1 bubble diameter between surfaces).
      * 0.0 = bubbles touch edge-to-edge.

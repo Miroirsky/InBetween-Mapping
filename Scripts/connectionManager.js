@@ -15,6 +15,7 @@ class ConnectionManager {
         this.nextId = 1;
         this.hoveredConnectionId = null;
         this.onlineManager = null;
+        this.connectionViewEnabled = false;
 
         // Active connection creation state (when user clicks "Add Connection")
         this.pendingSourceId = null;
@@ -25,6 +26,53 @@ class ConnectionManager {
 
     setOnlineManager(onlineManager) {
         this.onlineManager = onlineManager;
+    }
+
+    /**
+     * Toggles Connection View mode (colors connections dynamically by length ratio:
+     * 1.0x normal = white, 2.0x long = red, 0.5x short = blue, smoothly interpolated).
+     */
+    setConnectionView(enabled) {
+        this.connectionViewEnabled = !!enabled;
+        this.render();
+    }
+
+    /**
+     * Computes connection color for Connection View based on length ratio vs normal rest length.
+     * - 1.0x normal length -> White (#ffffff)
+     * - 2.0x twice as long -> Red (rgb(255, 42, 42)), smoothly interpolated (e.g. 1.5x is halfway white-red)
+     * - 0.5x twice as short -> Blue (rgb(42, 130, 255)), smoothly interpolated
+     */
+    getConnectionLengthColor(dist, fromRadius, toRadius) {
+        if (!this.connectionViewEnabled) {
+            return (this.config && this.config.arrowColor) || '#000000';
+        }
+
+        const diameter = (this.bubbleManager && this.bubbleManager.currentDiameter) || 100;
+        const gapMultiplier = (this.bubbleManager && this.bubbleManager.config && this.bubbleManager.config.bubbleGapMultiplier !== undefined)
+            ? this.bubbleManager.config.bubbleGapMultiplier
+            : 2.0;
+
+        // Normal visible connection length at physics rest equilibrium
+        const normalLength = Math.max(1, diameter * gapMultiplier);
+        const currentLength = Math.max(0, dist - (fromRadius + toRadius));
+        const ratio = currentLength / normalLength;
+
+        if (ratio >= 1.0) {
+            // Smoothly interpolate from White (1.0x) to Red (2.0x)
+            const t = Math.max(0, Math.min(1, (ratio - 1.0) / 1.0));
+            const r = 255;
+            const g = Math.round(255 + (42 - 255) * t);
+            const b = Math.round(255 + (42 - 255) * t);
+            return `rgb(${r}, ${g}, ${b})`;
+        } else {
+            // Smoothly interpolate from White (1.0x) to Blue (0.5x = twice as short)
+            const t = Math.max(0, Math.min(1, (1.0 - ratio) / 0.5));
+            const r = Math.round(255 + (42 - 255) * t);
+            const g = Math.round(255 + (130 - 255) * t);
+            const b = 255;
+            return `rgb(${r}, ${g}, ${b})`;
+        }
     }
 
     initSVG() {
@@ -68,7 +116,12 @@ class ConnectionManager {
         const toBubble = this.bubbleManager.getBubbleById(conn.toId);
         if (!fromBubble || !toBubble) return Infinity;
 
-        const radius = this.bubbleManager.currentRadius;
+        const fromRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
+            ? this.bubbleManager.getBubbleRadius(fromBubble)
+            : this.bubbleManager.currentRadius;
+        const toRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
+            ? this.bubbleManager.getBubbleRadius(toBubble)
+            : this.bubbleManager.currentRadius;
         const cfg = this.config;
         const dx = toBubble.x - fromBubble.x;
         const dy = toBubble.y - fromBubble.y;
@@ -87,10 +140,10 @@ class ConnectionManager {
             const startShiftAngle = angle + 0.2;
             const endShiftAngle = angle - 0.2;
 
-            startX = fromBubble.x + radius * Math.cos(startShiftAngle);
-            startY = fromBubble.y + radius * Math.sin(startShiftAngle);
-            endX = toBubble.x - radius * Math.cos(endShiftAngle);
-            endY = toBubble.y - radius * Math.sin(endShiftAngle);
+            startX = fromBubble.x + fromRadius * Math.cos(startShiftAngle);
+            startY = fromBubble.y + fromRadius * Math.sin(startShiftAngle);
+            endX = toBubble.x - toRadius * Math.cos(endShiftAngle);
+            endY = toBubble.y - toRadius * Math.sin(endShiftAngle);
 
             const rawMidX = (fromBubble.x + toBubble.x) * 0.5;
             const rawMidY = (fromBubble.y + toBubble.y) * 0.5;
@@ -108,10 +161,10 @@ class ConnectionManager {
             }
             return minDist;
         } else {
-            startX = fromBubble.x + radius * Math.cos(angle);
-            startY = fromBubble.y + radius * Math.sin(angle);
-            endX = toBubble.x - radius * Math.cos(angle);
-            endY = toBubble.y - radius * Math.sin(angle);
+            startX = fromBubble.x + fromRadius * Math.cos(angle);
+            startY = fromBubble.y + fromRadius * Math.sin(angle);
+            endX = toBubble.x - toRadius * Math.cos(angle);
+            endY = toBubble.y - toRadius * Math.sin(angle);
 
             const segDx = endX - startX;
             const segDy = endY - startY;
@@ -323,7 +376,9 @@ class ConnectionManager {
             return;
         }
 
-        const radius = this.bubbleManager.currentRadius;
+        const radius = typeof this.bubbleManager.getBubbleRadius === 'function'
+            ? this.bubbleManager.getBubbleRadius(source)
+            : this.bubbleManager.currentRadius;
         const dx = mouseX - source.x;
         const dy = mouseY - source.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -336,11 +391,14 @@ class ConnectionManager {
         const angle = Math.atan2(dy, dx);
         const startX = source.x + radius * Math.cos(angle);
         const startY = source.y + radius * Math.sin(angle);
+        const previewColor = this.connectionViewEnabled
+            ? this.getConnectionLengthColor(dist, radius, this.bubbleManager.currentRadius || radius)
+            : this.config.arrowColor;
 
         this.previewGroup.innerHTML = `
             <line x1="${startX}" y1="${startY}" x2="${mouseX}" y2="${mouseY}"
-                  stroke="${this.config.arrowColor}" stroke-width="${this.config.arrowWidth}" stroke-dasharray="6,4" stroke-linecap="round"/>
-            <circle cx="${mouseX}" cy="${mouseY}" r="4" fill="${this.config.arrowColor}"/>
+                  stroke="${previewColor}" stroke-width="${this.config.arrowWidth}" stroke-dasharray="6,4" stroke-linecap="round"/>
+            <circle cx="${mouseX}" cy="${mouseY}" r="4" fill="${previewColor}"/>
         `;
     }
 
@@ -350,7 +408,7 @@ class ConnectionManager {
     render() {
         if (!this.arrowsGroup || !this.labelsGroup) return;
 
-        const radius = this.bubbleManager.currentRadius;
+        const defaultRadius = this.bubbleManager.currentRadius;
         const cfg = this.config;
         const currentIds = new Set(this.connections.map(c => c.id));
 
@@ -369,6 +427,13 @@ class ConnectionManager {
 
             if (!fromBubble || !toBubble) continue;
 
+            const fromRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
+                ? this.bubbleManager.getBubbleRadius(fromBubble)
+                : defaultRadius;
+            const toRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
+                ? this.bubbleManager.getBubbleRadius(toBubble)
+                : defaultRadius;
+
             const dx = toBubble.x - fromBubble.x;
             const dy = toBubble.y - fromBubble.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -381,8 +446,8 @@ class ConnectionManager {
             let midX = 0;
             let midY = 0;
             let arrowEndAngle = angle;
-            let arrowTipX = toBubble.x - radius * Math.cos(angle);
-            let arrowTipY = toBubble.y - radius * Math.sin(angle);
+            let arrowTipX = toBubble.x - toRadius * Math.cos(angle);
+            let arrowTipY = toBubble.y - toRadius * Math.sin(angle);
 
             if (hasReverse) {
                 // Curved offset for bidirectional connections
@@ -394,10 +459,10 @@ class ConnectionManager {
                 const startShiftAngle = angle + 0.2;
                 const endShiftAngle = angle - 0.2;
 
-                const startX = fromBubble.x + radius * Math.cos(startShiftAngle);
-                const startY = fromBubble.y + radius * Math.sin(startShiftAngle);
-                arrowTipX = toBubble.x - radius * Math.cos(endShiftAngle);
-                arrowTipY = toBubble.y - radius * Math.sin(endShiftAngle);
+                const startX = fromBubble.x + fromRadius * Math.cos(startShiftAngle);
+                const startY = fromBubble.y + fromRadius * Math.sin(startShiftAngle);
+                arrowTipX = toBubble.x - toRadius * Math.cos(endShiftAngle);
+                arrowTipY = toBubble.y - toRadius * Math.sin(endShiftAngle);
 
                 // Control point offset in normal direction
                 const rawMidX = (fromBubble.x + toBubble.x) * 0.5;
@@ -415,10 +480,10 @@ class ConnectionManager {
                 arrowEndAngle = Math.atan2(arrowTipY - ctrlY, arrowTipX - ctrlX);
             } else {
                 // Straight connection
-                const startX = fromBubble.x + radius * Math.cos(angle);
-                const startY = fromBubble.y + radius * Math.sin(angle);
-                arrowTipX = toBubble.x - radius * Math.cos(angle);
-                arrowTipY = toBubble.y - radius * Math.sin(angle);
+                const startX = fromBubble.x + fromRadius * Math.cos(angle);
+                const startY = fromBubble.y + fromRadius * Math.sin(angle);
+                arrowTipX = toBubble.x - toRadius * Math.cos(angle);
+                arrowTipY = toBubble.y - toRadius * Math.sin(angle);
 
                 pathD = `M ${startX} ${startY} L ${arrowTipX} ${arrowTipY}`;
                 midX = (startX + arrowTipX) * 0.5;
@@ -442,6 +507,7 @@ class ConnectionManager {
             const arrowPolyPoints = `${arrowTipX},${arrowTipY} ${leftWingX},${leftWingY} ${rightWingX},${rightWingY}`;
             const safeName = conn.name || '';
             const isHovered = conn.id === this.hoveredConnectionId;
+            const arrowColor = this.getConnectionLengthColor(dist, fromRadius, toRadius);
 
             // 1. Render/Update Arrow in arrowsGroup (Bottom Layer)
             let arrowGroup = this.arrowsGroup.querySelector(`.universe-connection[data-id="${conn.id}"]`);
@@ -452,18 +518,24 @@ class ConnectionManager {
                 arrowGroup.setAttribute('filter', 'url(#arrow-shadow)');
 
                 arrowGroup.innerHTML = `
-                    <path fill="none" stroke="${cfg.arrowColor}" stroke-width="${cfg.arrowWidth}" stroke-linecap="round" class="conn-line" pointer-events="stroke"/>
-                    <polygon fill="${cfg.arrowColor}" class="conn-arrowhead" pointer-events="all"/>
+                    <path fill="none" stroke="${arrowColor}" stroke-width="${cfg.arrowWidth}" stroke-linecap="round" class="conn-line" pointer-events="stroke"/>
+                    <polygon fill="${arrowColor}" class="conn-arrowhead" pointer-events="all"/>
                     <path fill="none" stroke="rgba(0,0,0,0.001)" stroke-width="36" class="conn-hitbox" pointer-events="stroke"/>
                 `;
                 this.arrowsGroup.appendChild(arrowGroup);
             }
 
             const line = arrowGroup.querySelector('.conn-line');
-            if (line) line.setAttribute('d', pathD);
+            if (line) {
+                line.setAttribute('d', pathD);
+                line.setAttribute('stroke', arrowColor);
+            }
 
             const head = arrowGroup.querySelector('.conn-arrowhead');
-            if (head) head.setAttribute('points', arrowPolyPoints);
+            if (head) {
+                head.setAttribute('points', arrowPolyPoints);
+                head.setAttribute('fill', arrowColor);
+            }
 
             const hitbox = arrowGroup.querySelector('.conn-hitbox');
             if (hitbox) hitbox.setAttribute('d', pathD);

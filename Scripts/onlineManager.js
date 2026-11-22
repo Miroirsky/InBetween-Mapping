@@ -160,6 +160,7 @@ class OnlineManager {
             color: bubble.color,
             x: bubble.x,
             y: bubble.y,
+            scale: bubble.scale,
             isLocked: !!bubble.isLocked,
             updatedBy: this.user.id,
             updatedAt: Date.now()
@@ -167,7 +168,7 @@ class OnlineManager {
     }
 
     isLocalDragging() {
-        return this.bubbleManager.bubbles.some(b => b.isDragging);
+        return this.bubbleManager.bubbles.some(b => b.isDragging || b.isResizing);
     }
 
     startPhysicsSyncLoop() {
@@ -420,7 +421,7 @@ class OnlineManager {
                 state.bubbles.forEach(b => {
                     const clean = this.firebaseService.sanitizeBubble(b, b && b.id);
                     if (clean) {
-                        this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked);
+                        this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale);
                     }
                 });
             }
@@ -469,7 +470,7 @@ class OnlineManager {
             rawBubbles.forEach(b => {
                 const clean = this.firebaseService.sanitizeBubble(b, b && b.id);
                 if (clean) {
-                    const created = this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked);
+                    const created = this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale);
                     if (created) {
                         created._lastSyncedX = clean.x;
                         created._lastSyncedY = clean.y;
@@ -559,6 +560,10 @@ class OnlineManager {
                         this.bubbleManager.setBubbleColor(id, rb.color);
                     }
 
+                    if (!local.isResizing && rb.scale !== undefined && local.scale !== rb.scale) {
+                        this.bubbleManager.setBubbleScale(id, rb.scale, false);
+                    }
+
                     if (!!local.isLocked !== !!rb.isLocked) {
                         local.isLocked = !!rb.isLocked;
                         local.vx = 0;
@@ -570,7 +575,7 @@ class OnlineManager {
                         }
                     }
                 } else {
-                    const created = this.bubbleManager.createBubble(rb.x, rb.y, rb.name, rb.color, id, rb.isLocked);
+                    const created = this.bubbleManager.createBubble(rb.x, rb.y, rb.name, rb.color, id, rb.isLocked, rb.scale);
                     if (created) {
                         created._lastSyncedX = rb.x;
                         created._lastSyncedY = rb.y;
@@ -656,13 +661,16 @@ class OnlineManager {
                     local.vy = 0;
                     this.bubbleManager.updateElementPosition(local);
                 }
+                if (bubbleData && bubbleData.scale !== undefined && !local.isResizing && local.scale !== bubbleData.scale) {
+                    this.bubbleManager.setBubbleScale(id, bubbleData.scale, false);
+                }
                 if (this.connectionManager) {
                     this.connectionManager.render();
                 }
             } else if (!local && bubbleData) {
                 const clean = this.firebaseService.sanitizeBubble(bubbleData, id);
                 if (clean) {
-                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked);
+                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale);
                 }
             }
         } finally {
@@ -692,13 +700,16 @@ class OnlineManager {
                 if (data.color !== undefined && local.color !== data.color) {
                     this.bubbleManager.setBubbleColor(id, data.color);
                 }
+                if (data.scale !== undefined && !local.isResizing && local.scale !== data.scale) {
+                    this.bubbleManager.setBubbleScale(id, data.scale, false);
+                }
                 if (data.isLocked !== undefined && !!local.isLocked !== !!data.isLocked) {
                     this.bubbleManager.toggleLock(id);
                 }
             } else {
                 const clean = this.firebaseService.sanitizeBubble(data, id);
                 if (clean) {
-                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked);
+                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale);
                 }
             }
         } finally {

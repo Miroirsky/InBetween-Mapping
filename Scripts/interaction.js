@@ -19,6 +19,14 @@ class InteractionManager {
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
 
+        // Bubble Outline Hover & Resize State
+        this.hoveredBubble = null;
+        this.hoveredOutlineBubble = null;
+        this.resizingBubble = null;
+        this.resizingGroup = []; // Array of { bubble, initialScale }
+        this.resizeInitialScale = 1.0;
+        this.resizeInitialDist = 50;
+
         // Multi-Bubble Selection State (Right-click & drag marquee)
         this.selectedBubbleIds = new Set();
         this.isRightMouseDown = false;
@@ -196,7 +204,7 @@ class InteractionManager {
             return;
         }
 
-        const r = this.manager.currentRadius || 40;
+        const defaultR = this.manager.currentRadius || 40;
         const pad = 12;
         let minX = Infinity;
         let minY = Infinity;
@@ -204,6 +212,9 @@ class InteractionManager {
         let maxY = -Infinity;
 
         for (const b of selected) {
+            const r = typeof this.manager.getBubbleRadius === 'function'
+                ? this.manager.getBubbleRadius(b)
+                : defaultR;
             if (b.x - r < minX) minX = b.x - r;
             if (b.y - r < minY) minY = b.y - r;
             if (b.x + r > maxX) maxX = b.x + r;
@@ -224,6 +235,125 @@ class InteractionManager {
             this.groupBadgeEl.textContent = `${selected.length} Selected • Drag to move`;
         }
         this.groupFrameEl.classList.add('visible');
+    }
+
+    /**
+     * Computes directional resize cursor class/style based on angle from bubble center to cursor.
+     */
+    getResizeCursorForAngle(dx, dy) {
+        const angleDeg = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 180;
+        if (angleDeg >= 22.5 && angleDeg < 67.5) {
+            return 'nwse-resize';
+        } else if (angleDeg >= 67.5 && angleDeg < 112.5) {
+            return 'ns-resize';
+        } else if (angleDeg >= 112.5 && angleDeg < 157.5) {
+            return 'nesw-resize';
+        }
+        return 'ew-resize';
+    }
+
+    /**
+     * Checks if the cursor at (boardX, boardY) is hovering over a bubble or its outer outline ring.
+     * Updates hover classes and resize cursor accordingly.
+     */
+    updateOutlineHoverState(boardX, boardY) {
+        let bestBubble = null;
+        let isOnOutline = false;
+        let bestDistToEdge = Infinity;
+
+        // Check in reverse order so top-most bubbles take priority
+        for (let i = this.manager.bubbles.length - 1; i >= 0; i--) {
+            const b = this.manager.bubbles[i];
+            const r = typeof this.manager.getBubbleRadius === 'function'
+                ? this.manager.getBubbleRadius(b)
+                : this.manager.currentRadius;
+
+            const dist = Math.hypot(boardX - b.x, boardY - b.y);
+            const outerTolerance = 8; // Board units outside the perimeter
+            const innerBand = Math.max(10, Math.min(22, r * 0.26));
+            const innerLimit = Math.max(r * 0.42, r - innerBand);
+
+            if (dist <= r + outerTolerance) {
+                const onEdge = dist >= innerLimit && dist <= r + outerTolerance;
+                const distToEdge = Math.abs(dist - r);
+
+                if (!bestBubble || (onEdge && !isOnOutline) || (onEdge === isOnOutline && distToEdge < bestDistToEdge)) {
+                    bestBubble = b;
+                    isOnOutline = onEdge;
+                    bestDistToEdge = distToEdge;
+                }
+            }
+        }
+
+        // Update hovered bubble visual state (shows outline when hovering the bubble or its edge)
+        if (this.hoveredBubble && this.hoveredBubble !== bestBubble) {
+            if (this.hoveredBubble.element) {
+                this.hoveredBubble.element.classList.remove('is-bubble-hovered', 'is-outline-hovered');
+                this.hoveredBubble.element.style.cursor = '';
+            }
+        }
+        this.hoveredBubble = bestBubble;
+
+        const targetOutlineBubble = isOnOutline ? bestBubble : null;
+        if (this.hoveredOutlineBubble && this.hoveredOutlineBubble !== targetOutlineBubble) {
+            if (this.hoveredOutlineBubble.element) {
+                this.hoveredOutlineBubble.element.classList.remove('is-outline-hovered');
+                this.hoveredOutlineBubble.element.style.cursor = '';
+            }
+        }
+        this.hoveredOutlineBubble = targetOutlineBubble;
+
+        if (bestBubble && bestBubble.element) {
+            bestBubble.element.classList.add('is-bubble-hovered');
+
+            if (isOnOutline) {
+                bestBubble.element.classList.add('is-outline-hovered');
+                const cursor = this.getResizeCursorForAngle(boardX - bestBubble.x, boardY - bestBubble.y);
+                bestBubble.element.style.cursor = cursor;
+                document.body.style.cursor = cursor;
+            } else {
+                bestBubble.element.classList.remove('is-outline-hovered');
+                bestBubble.element.style.cursor = '';
+                document.body.style.cursor = '';
+            }
+        } else {
+            document.body.style.cursor = '';
+        }
+
+        return { hoveredBubble: bestBubble, hoveredOutlineBubble: targetOutlineBubble };
+    }
+
+    /**
+     * Begins resizing a bubble (and any other selected bubbles if it's part of a multi-selection)
+     * by dragging its outline.
+     */
+    startResizingBubble(bubble, boardCoords) {
+        if (!bubble) return;
+
+        this.resizingBubble = bubble;
+        this.resizeInitialScale = this.manager.getBubbleScale(bubble);
+        this.resizeInitialDist = Math.max(5, Math.hypot(boardCoords.x - bubble.x, boardCoords.y - bubble.y));
+
+        const targetBubbles = this.selectedBubbleIds.has(bubble.id)
+            ? this.getSelectedBubbles()
+            : [bubble];
+
+        this.resizingGroup = targetBubbles.map(b => {
+            b.isResizing = true;
+            b.vx = 0;
+            b.vy = 0;
+            if (b.element) {
+                b.element.classList.add('is-resizing', 'is-outline-hovered', 'is-bubble-hovered');
+            }
+            return {
+                bubble: b,
+                initialScale: this.manager.getBubbleScale(b)
+            };
+        });
+
+        const cursor = this.getResizeCursorForAngle(boardCoords.x - bubble.x, boardCoords.y - bubble.y);
+        document.body.classList.add('is-resizing-bubble');
+        document.body.style.cursor = cursor;
     }
 
     /**
@@ -432,6 +562,14 @@ class InteractionManager {
                 return;
             }
 
+            // Check if clicked on a bubble's outline to resize it!
+            const hoverCheck = this.updateOutlineHoverState(boardCoords.x, boardCoords.y);
+            if (hoverCheck.hoveredOutlineBubble && !(e.shiftKey || e.ctrlKey || e.metaKey)) {
+                this.startResizingBubble(hoverCheck.hoveredOutlineBubble, boardCoords);
+                this.contextMenu.close();
+                return;
+            }
+
             // Check if clicked on a universe bubble to drag it (or drag all selected bubbles)
             const bubbleEl = e.target.closest('.universe-bubble');
             if (bubbleEl) {
@@ -492,7 +630,7 @@ class InteractionManager {
             this.contextMenu.close();
         });
 
-        // Mouse move (Update marquee selection, dragged bubble(s), background pan, or connection preview line)
+        // Mouse move (Update marquee selection, outline resize, dragged bubble(s), background pan, or connection preview line)
         window.addEventListener('mousemove', (e) => {
             const boardCoords = this.getBoardCoords(e.clientX, e.clientY);
 
@@ -538,9 +676,13 @@ class InteractionManager {
                     const maxX = Math.max(this.selectStartBoardX, boardCoords.x);
                     const minY = Math.min(this.selectStartBoardY, boardCoords.y);
                     const maxY = Math.max(this.selectStartBoardY, boardCoords.y);
-                    const hitRadius = (this.manager.currentRadius || 40) * 0.78;
+                    const defaultRadius = this.manager.currentRadius || 50;
 
                     for (const bubble of this.manager.bubbles) {
+                        const r = typeof this.manager.getBubbleRadius === 'function'
+                            ? this.manager.getBubbleRadius(bubble)
+                            : defaultRadius;
+                        const hitRadius = r * 0.78;
                         const closestX = Math.max(minX, Math.min(bubble.x, maxX));
                         const closestY = Math.max(minY, Math.min(bubble.y, maxY));
                         const distToBox = Math.hypot(bubble.x - closestX, bubble.y - closestY);
@@ -577,7 +719,35 @@ class InteractionManager {
                 return;
             }
 
-            // 4. Handle dragged bubble(s) (single or multi-selection group)
+            // 4. Handle bubble outline resizing (snaps to 20% of default bubble size)
+            if (this.resizingBubble) {
+                const primary = this.resizingBubble;
+                const defaultRadius = this.manager.currentRadius || 50;
+                const currentDist = Math.hypot(boardCoords.x - primary.x, boardCoords.y - primary.y);
+
+                // Compute scale relative to default bubble radius and snap to 20% (0.2) steps
+                const rawPrimaryScale = currentDist / defaultRadius;
+                const snappedPrimaryScale = this.manager.snapScale(rawPrimaryScale);
+                const scaleDelta = snappedPrimaryScale - this.resizeInitialScale;
+
+                for (const item of this.resizingGroup) {
+                    const targetScale = item.bubble.id === primary.id
+                        ? snappedPrimaryScale
+                        : this.manager.snapScale(item.initialScale + scaleDelta);
+                    this.manager.setBubbleScale(item.bubble.id, targetScale, true);
+                }
+
+                const cursor = this.getResizeCursorForAngle(boardCoords.x - primary.x, boardCoords.y - primary.y);
+                document.body.style.cursor = cursor;
+                if (primary.element) {
+                    primary.element.style.cursor = cursor;
+                }
+
+                this.updateGroupSelectionFrame();
+                return;
+            }
+
+            // 5. Handle dragged bubble(s) (single or multi-selection group)
             if (this.draggedBubbles && this.draggedBubbles.length > 0) {
                 for (const item of this.draggedBubbles) {
                     const b = item.bubble;
@@ -596,20 +766,23 @@ class InteractionManager {
                 return;
             }
 
-            // 5. Update cursor when hovering inside the multi-selection group frame
-            if (this.isPointInGroupSelectionBounds(boardCoords.x, boardCoords.y)) {
+            // 6. Check if hovering a bubble or its outline ring
+            const hoverCheck = this.updateOutlineHoverState(boardCoords.x, boardCoords.y);
+
+            // 7. Update cursor when hovering inside the multi-selection group frame (if not on an outline)
+            if (!hoverCheck.hoveredOutlineBubble && this.isPointInGroupSelectionBounds(boardCoords.x, boardCoords.y)) {
                 document.body.classList.add('is-hovering-selection-group');
             } else {
                 document.body.classList.remove('is-hovering-selection-group');
             }
 
-            // 6. Normal hover: check if hovering near any connection line or label
+            // 8. Normal hover: check if hovering near any connection line or label
             if (this.connectionManager) {
                 this.connectionManager.checkHover(boardCoords.x, boardCoords.y);
             }
         });
 
-        // Mouse up (End right-click marquee selection, bubble/group drag, or background pan)
+        // Mouse up (End right-click marquee selection, outline resize, bubble/group drag, or background pan)
         window.addEventListener('mouseup', (e) => {
             if (e.button === 2 || this.isRightMouseDown) {
                 this.isRightMouseDown = false;
@@ -620,6 +793,36 @@ class InteractionManager {
                     }
                     document.body.classList.remove('is-selecting-bubbles');
                     this.updateGroupSelectionFrame();
+                }
+            }
+
+            if (this.resizingBubble) {
+                const resizedBubbles = this.resizingGroup.map(item => item.bubble);
+
+                for (const bubble of resizedBubbles) {
+                    bubble.isResizing = false;
+                    if (bubble.element) {
+                        bubble.element.classList.remove('is-resizing');
+                    }
+                }
+
+                this.resizingBubble = null;
+                this.resizingGroup = [];
+                document.body.classList.remove('is-resizing-bubble');
+
+                const boardCoords = this.getBoardCoords(e.clientX, e.clientY);
+                this.updateOutlineHoverState(boardCoords.x, boardCoords.y);
+                this.updateGroupSelectionFrame();
+
+                if (this.manager.onlineManager && this.manager.onlineManager.isOnline && resizedBubbles.length > 0) {
+                    for (const bubble of resizedBubbles) {
+                        this.manager.onlineManager.pendingDragUpdates.set(bubble.id, bubble);
+                    }
+                    this.manager.onlineManager.onBubbleDragEnd(resizedBubbles[resizedBubbles.length - 1]);
+                }
+
+                if (this.manager.savingManager && (!this.manager.onlineManager || !this.manager.onlineManager.isOnline)) {
+                    this.manager.savingManager.saveSessionSnapshot();
                 }
             }
 

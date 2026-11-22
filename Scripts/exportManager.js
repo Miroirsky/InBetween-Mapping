@@ -433,6 +433,7 @@ class ExportManager {
             color: b.color,
             x: Math.round(b.x * 100) / 100,
             y: Math.round(b.y * 100) / 100,
+            scale: Number.isFinite(Number(b.scale)) ? Number(b.scale) : 1.0,
             isLocked: !!b.isLocked
         }));
 
@@ -799,7 +800,7 @@ class ExportManager {
         // 2. Recreate universes
         if (Array.isArray(data.bubbles)) {
             data.bubbles.forEach(b => {
-                this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked);
+                this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked, b.scale);
             });
         }
 

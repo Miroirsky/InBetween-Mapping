@@ -70,9 +70,17 @@ class BubblePhysics {
         // 1. Pairwise repulsion between all bubbles (keeps them from crowding)
         for (let i = 0; i < count; i++) {
             const b1 = bubbles[i];
+            const r1 = typeof this.manager.getBubbleRadius === 'function'
+                ? this.manager.getBubbleRadius(b1)
+                : radius;
 
             for (let j = i + 1; j < count; j++) {
                 const b2 = bubbles[j];
+                const r2 = typeof this.manager.getBubbleRadius === 'function'
+                    ? this.manager.getBubbleRadius(b2)
+                    : radius;
+
+                const pairTargetDistance = (r1 + r2) + diameter * gapMultiplier;
 
                 let dx = b2.x - b1.x;
                 let dy = b2.y - b1.y;
@@ -85,16 +93,16 @@ class BubblePhysics {
                     dist = Math.sqrt(dx * dx + dy * dy) || 1;
                 }
 
-                if (dist < targetDistance) {
+                if (dist < pairTargetDistance) {
                     const nx = dx / dist;
                     const ny = dy / dist;
 
                     // Push force proportional to penetration depth
-                    const overlap = targetDistance - dist;
+                    const overlap = pairTargetDistance - dist;
                     const force = overlap * repulsion;
 
-                    const b1Movable = !b1.isLocked && !b1.isDragging;
-                    const b2Movable = !b2.isLocked && !b2.isDragging;
+                    const b1Movable = !b1.isLocked && !b1.isDragging && !b1.isResizing;
+                    const b2Movable = !b2.isLocked && !b2.isDragging && !b2.isResizing;
 
                     if (b1Movable && b2Movable) {
                         const halfForce = force * 0.5;
@@ -114,7 +122,7 @@ class BubblePhysics {
         }
 
         // 2. Strict Distance Constraint for Connected Universes:
-        // Connected universes are constrained to always stay at the exact same distance (targetDistance)
+        // Connected universes are constrained to always stay at the exact same distance
         if (this.connectionManager && this.connectionManager.connections.length > 0) {
             const connections = this.connectionManager.connections;
             const springK = (this.connectionConfig && this.connectionConfig.springStrength) || 0.12;
@@ -132,6 +140,14 @@ class BubblePhysics {
                 const b2 = this.manager.getBubbleById(conn.toId);
                 if (!b1 || !b2) continue;
 
+                const r1 = typeof this.manager.getBubbleRadius === 'function'
+                    ? this.manager.getBubbleRadius(b1)
+                    : radius;
+                const r2 = typeof this.manager.getBubbleRadius === 'function'
+                    ? this.manager.getBubbleRadius(b2)
+                    : radius;
+                const pairTargetDistance = (r1 + r2) + diameter * gapMultiplier;
+
                 let dx = b2.x - b1.x;
                 let dy = b2.y - b1.y;
                 let dist = Math.sqrt(dx * dx + dy * dy);
@@ -146,9 +162,9 @@ class BubblePhysics {
                 const ny = dy / dist;
 
                 // Difference from target distance
-                // If dist > targetDistance, delta > 0 (pulls bubbles together)
-                // If dist < targetDistance, delta < 0 (pushes bubbles apart)
-                const delta = dist - targetDistance;
+                // If dist > pairTargetDistance, delta > 0 (pulls bubbles together)
+                // If dist < pairTargetDistance, delta < 0 (pushes bubbles apart)
+                const delta = dist - pairTargetDistance;
                 let impulse = delta * springK;
 
                 // Clamp impulse to prevent physics explosion
@@ -156,8 +172,8 @@ class BubblePhysics {
                     impulse = Math.sign(impulse) * maxCorrection;
                 }
 
-                const b1Movable = !b1.isLocked && !b1.isDragging;
-                const b2Movable = !b2.isLocked && !b2.isDragging;
+                const b1Movable = !b1.isLocked && !b1.isDragging && !b1.isResizing;
+                const b2Movable = !b2.isLocked && !b2.isDragging && !b2.isResizing;
 
                 if (b1Movable && b2Movable) {
                     const halfImpulse = impulse * 0.5;
@@ -179,7 +195,7 @@ class BubblePhysics {
         for (let i = 0; i < count; i++) {
             const b = bubbles[i];
 
-            if (b.isDragging || b.isLocked) {
+            if (b.isDragging || b.isResizing || b.isLocked) {
                 b.vx = 0;
                 b.vy = 0;
                 continue;

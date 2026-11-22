@@ -109,6 +109,8 @@ class FirebaseService {
 
         const id = Math.floor(rawId);
         const rawName = (b.name && typeof b.name === 'string' && !b.name.includes('NaN')) ? b.name.trim() : '';
+        const rawScale = Number(b.scale);
+        const scale = (Number.isFinite(rawScale) && rawScale > 0) ? Math.round(rawScale * 100) / 100 : 1.0;
 
         return {
             id,
@@ -116,6 +118,7 @@ class FirebaseService {
             color: (b.color && typeof b.color === 'string') ? b.color : '#000000',
             x: Math.round(x * 100) / 100,
             y: Math.round(y * 100) / 100,
+            scale,
             isLocked: !!b.isLocked,
             updatedBy: (b.updatedBy && typeof b.updatedBy === 'string') ? b.updatedBy : 'peer',
             updatedAt: Number.isFinite(Number(b.updatedAt)) ? Number(b.updatedAt) : Date.now()

@@ -85,10 +85,42 @@ class BubbleManager {
         return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
+    /**
+     * Snaps a raw scale multiplier to steps of 20% (0.2) of the default bubble's size.
+     */
+    snapScale(rawScale) {
+        const val = Number(rawScale);
+        if (!Number.isFinite(val) || val <= 0) return 1.0;
+        const stepPercent = (this.config && Number(this.config.sizeSnapPercent)) || 20;
+        const step = stepPercent / 100; // 0.2 = 20%
+        const minScale = (this.config && Number(this.config.minScale)) || 0.2;
+        const maxScale = (this.config && Number(this.config.maxScale)) || 4.0;
+        const snapped = Math.round(val / step) * step;
+        return Math.max(minScale, Math.min(maxScale, Math.round(snapped * 100) / 100));
+    }
+
+    getBubbleScale(bubble) {
+        if (!bubble || !Number.isFinite(Number(bubble.scale)) || Number(bubble.scale) <= 0) {
+            return 1.0;
+        }
+        return Number(bubble.scale);
+    }
+
+    getBubbleDiameter(bubble) {
+        return this.currentDiameter * this.getBubbleScale(bubble);
+    }
+
+    getBubbleRadius(bubble) {
+        return this.currentRadius * this.getBubbleScale(bubble);
+    }
+
     applyBubbleStyle(bubble) {
         const el = bubble.element;
-        el.style.width = `${this.currentDiameter}px`;
-        el.style.height = `${this.currentDiameter}px`;
+        const scale = this.getBubbleScale(bubble);
+        const diameter = this.getBubbleDiameter(bubble);
+
+        el.style.width = `${diameter}px`;
+        el.style.height = `${diameter}px`;
         el.style.border = 'none';
         el.style.outline = 'none';
 
@@ -99,9 +131,38 @@ class BubbleManager {
         el.style.background = `radial-gradient(circle closest-side, ${c100} 0%, ${c0} 100%)`;
 
         if (bubble.nameElement) {
-            const fontSize = Math.max(10, Math.min(18, Math.round(this.currentDiameter * 0.13)));
+            const fontSize = Math.max(8, Math.min(28, Math.round(diameter * 0.13)));
             bubble.nameElement.style.fontSize = `${fontSize}px`;
         }
+
+        if (bubble.sizeBadge) {
+            bubble.sizeBadge.textContent = `${Math.round(scale * 100)}%`;
+        }
+    }
+
+    /**
+     * Updates the scale of a bubble (snapped to 20% increments of default bubble size).
+     */
+    setBubbleScale(id, newScale, syncOnline = true) {
+        const bubble = this.getBubbleById(id);
+        if (!bubble) return false;
+
+        const snapped = this.snapScale(newScale);
+        if (bubble.scale === snapped) return false;
+
+        bubble.scale = snapped;
+        this.applyBubbleStyle(bubble);
+        this.updateElementPosition(bubble);
+
+        if (this.connectionManager) {
+            this.connectionManager.render();
+        }
+
+        if (syncOnline && this.onlineManager && this.onlineManager.isOnline) {
+            this.onlineManager.onBubbleDrag(bubble);
+        }
+
+        return true;
     }
 
     /**
@@ -122,8 +183,11 @@ class BubbleManager {
     /**
      * Creates and adds a new universe bubble.
      */
-    createBubble(x, y, name = '', color = null, customId = null, isLocked = false) {
+    createBubble(x, y, name = '', color = null, customId = null, isLocked = false, scale = 1.0) {
         this.calculateDimensions();
+
+        const bubbleScale = this.snapScale(scale);
+        const bubbleRadius = this.currentRadius * bubbleScale;
 
         let targetX = Number.isFinite(Number(x)) ? Number(x) : 500;
         let targetY = Number.isFinite(Number(y)) ? Number(y) : 500;
@@ -134,11 +198,11 @@ class BubbleManager {
         // Only clamp initial position to current viewport when user manually creates a new bubble
         if (!isRemoteOrRestore) {
             const bounds = this.getViewportBounds();
-            if (bounds.maxX > bounds.minX + 2 * this.currentRadius) {
-                targetX = Math.max(bounds.minX + this.currentRadius, Math.min(bounds.maxX - this.currentRadius, targetX));
+            if (bounds.maxX > bounds.minX + 2 * bubbleRadius) {
+                targetX = Math.max(bounds.minX + bubbleRadius, Math.min(bounds.maxX - bubbleRadius, targetX));
             }
-            if (bounds.maxY > bounds.minY + 2 * this.currentRadius) {
-                targetY = Math.max(bounds.minY + this.currentRadius, Math.min(bounds.maxY - this.currentRadius, targetY));
+            if (bounds.maxY > bounds.minY + 2 * bubbleRadius) {
+                targetY = Math.max(bounds.minY + bubbleRadius, Math.min(bounds.maxY - bubbleRadius, targetY));
             }
         }
 
@@ -152,6 +216,7 @@ class BubbleManager {
             existing.y = targetY;
             existing.vx = 0;
             existing.vy = 0;
+            existing.scale = bubbleScale;
             if (name && typeof name === 'string' && name.trim().length > 0) {
                 existing.name = name.trim();
                 if (existing.nameElement) {
@@ -183,6 +248,17 @@ class BubbleManager {
         el.className = 'universe-bubble';
         el.dataset.id = id;
 
+        // Interactive resize outline ring (appears when hovered)
+        const outlineEl = document.createElement('div');
+        outlineEl.className = 'bubble-resize-outline';
+        el.appendChild(outlineEl);
+
+        // Live size percentage badge (appears while resizing)
+        const sizeBadgeEl = document.createElement('div');
+        sizeBadgeEl.className = 'bubble-size-badge';
+        sizeBadgeEl.textContent = `${Math.round(bubbleScale * 100)}%`;
+        el.appendChild(sizeBadgeEl);
+
         // Name label
         const nameEl = document.createElement('span');
         nameEl.className = 'bubble-name';
@@ -209,9 +285,13 @@ class BubbleManager {
             y: targetY,
             vx: 0,
             vy: 0,
+            scale: bubbleScale,
             isLocked: !!isLocked,
             isDragging: false,
+            isResizing: false,
             element: el,
+            outlineElement: outlineEl,
+            sizeBadge: sizeBadgeEl,
             nameElement: nameEl,
             lockBadge: lockIcon
         };
@@ -381,7 +461,7 @@ class BubbleManager {
      * Update DOM element transform.
      */
     updateElementPosition(bubble) {
-        const r = this.currentRadius;
+        const r = this.getBubbleRadius(bubble);
         bubble.element.style.transform = `translate3d(${bubble.x - r}px, ${bubble.y - r}px, 0)`;
     }
 }
