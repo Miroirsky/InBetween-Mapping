@@ -380,13 +380,102 @@ class ContextMenu {
     }
 
     /**
-     * Show menu for bubble right-click
+     * Show menu for bubble right-click (supports single bubble or multi-selection group)
      */
-    showBubbleMenu(x, y, bubbleId) {
+    showBubbleMenu(x, y, bubbleId, selectedBubbles = [], onClearSelection = null) {
         const bubble = this.manager.getBubbleById(bubbleId);
         if (!bubble) return;
 
         this.activeTargetBubbleId = bubbleId;
+        const isMulti = Array.isArray(selectedBubbles) && selectedBubbles.length > 1;
+
+        if (isMulti) {
+            const count = selectedBubbles.length;
+            const allLocked = selectedBubbles.every(b => b.isLocked);
+            const targetIds = selectedBubbles.map(b => b.id);
+
+            const items = [
+                {
+                    label: `Change Color (${count})`,
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="9"></circle>
+                            <path d="M12 3a9 9 0 0 1 9 9c0 2.5-2 4.5-4.5 4.5h-1.5a2 2 0 0 0-2 2v.5a2 2 0 0 1-2 2c-.5 0-1-.2-1.5-.5"></path>
+                        </svg>
+                    `,
+                    action: () => {
+                        this.showColorPrompt({
+                            currentColor: bubble.color || this.manager.config.bubbleColor || '#000000',
+                            onSubmit: (newColor) => {
+                                targetIds.forEach(id => this.manager.setBubbleColor(id, newColor));
+                            }
+                        });
+                    }
+                },
+                {
+                    label: allLocked ? `Unlock Selected (${count})` : `Lock Selected (${count})`,
+                    icon: allLocked ? `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+                        </svg>
+                    ` : `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                    `,
+                    action: () => {
+                        const shouldLock = !allLocked;
+                        targetIds.forEach(id => {
+                            const b = this.manager.getBubbleById(id);
+                            if (b && b.isLocked !== shouldLock) {
+                                this.manager.toggleLock(id);
+                            }
+                        });
+                    }
+                },
+                {
+                    label: 'Clear Selection',
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 4"></rect>
+                        </svg>
+                    `,
+                    action: () => {
+                        if (onClearSelection) onClearSelection();
+                    }
+                },
+                {
+                    label: `Remove Selected (${count})`,
+                    danger: true,
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    `,
+                    action: () => {
+                        this.showConfirm({
+                            title: `Remove ${count} Universes`,
+                            message: `Are you sure you want to delete the ${count} selected universes?`,
+                            subtext: 'All selected universes and their attached connections will be permanently removed.',
+                            confirmText: `Remove (${count})`,
+                            cancelText: 'Cancel',
+                            danger: true,
+                            onConfirm: () => {
+                                targetIds.forEach(id => this.manager.removeBubble(id));
+                                if (onClearSelection) onClearSelection();
+                            }
+                        });
+                    }
+                }
+            ];
+
+            this.renderMenu(`${count} Universes Selected`, items, x, y);
+            return;
+        }
+
         const isLocked = bubble.isLocked;
 
         const items = [
