@@ -369,6 +369,12 @@ class ContextMenu {
                             </svg>
                             <span>Sondage</span>
                         </button>
+                        <button type="button" class="comment-type-btn" data-type="color">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="9"></circle>
+                            </svg>
+                            <span>Color</span>
+                        </button>
                     </div>
 
                     <div id="comment-fields-text" class="comment-fields-group">
@@ -400,6 +406,33 @@ class ContextMenu {
                         </div>
                     </div>
 
+                    <div id="comment-fields-color" class="comment-fields-group" style="display: none;">
+                        <div class="color-comment-preview-row">
+                            <div id="comment-color-circle-preview" class="color-comment-circle-preview"></div>
+                            <div class="color-comment-inputs-col">
+                                <div class="color-comment-hex-row">
+                                    <label class="color-comment-field-label" for="comment-modal-hex">HEX</label>
+                                    <input type="text" id="comment-modal-hex" class="modal-input color-comment-hex-input" maxlength="7" autocomplete="off" spellcheck="false" placeholder="#F59E0B">
+                                    <input type="color" id="comment-modal-color-picker-main" class="comment-color-picker" value="#f59e0b" title="Color picker">
+                                </div>
+                                <div class="color-comment-rgb-row">
+                                    <label class="color-rgb-box">
+                                        <span>R</span>
+                                        <input type="number" id="comment-modal-rgb-r" class="modal-input color-rgb-input" min="0" max="255" value="245">
+                                    </label>
+                                    <label class="color-rgb-box">
+                                        <span>G</span>
+                                        <input type="number" id="comment-modal-rgb-g" class="modal-input color-rgb-input" min="0" max="255" value="158">
+                                    </label>
+                                    <label class="color-rgb-box">
+                                        <span>B</span>
+                                        <input type="number" id="comment-modal-rgb-b" class="modal-input color-rgb-input" min="0" max="255" value="11">
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="comment-color-section">
                         <span class="comment-color-label">Color</span>
                         <div class="comment-color-row">
@@ -422,6 +455,13 @@ class ContextMenu {
         this.commentFieldsText = modal.querySelector('#comment-fields-text');
         this.commentFieldsLink = modal.querySelector('#comment-fields-link');
         this.commentFieldsPoll = modal.querySelector('#comment-fields-poll');
+        this.commentFieldsColor = modal.querySelector('#comment-fields-color');
+        this.commentColorCirclePreview = modal.querySelector('#comment-color-circle-preview');
+        this.commentHexInput = modal.querySelector('#comment-modal-hex');
+        this.commentColorPickerMain = modal.querySelector('#comment-modal-color-picker-main');
+        this.commentRgbR = modal.querySelector('#comment-modal-rgb-r');
+        this.commentRgbG = modal.querySelector('#comment-modal-rgb-g');
+        this.commentRgbB = modal.querySelector('#comment-modal-rgb-b');
         this.commentTextarea = modal.querySelector('#comment-modal-textarea');
         this.commentUrlInput = modal.querySelector('#comment-modal-url');
         this.commentLinkLabelInput = modal.querySelector('#comment-modal-link-label');
@@ -489,7 +529,7 @@ class ContextMenu {
             : ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#ef4444', '#06b6d4', '#84cc16', '#334155', '#18181b'];
 
         let selectedType = isEdit
-            ? ((comment.type === 'link' || comment.type === 'poll') ? comment.type : 'text')
+            ? ((comment.type === 'link' || comment.type === 'poll' || comment.type === 'color') ? comment.type : 'text')
             : 'text';
         let selectedColor = (isEdit && comment.color) ? comment.color : (cfg.defaultColor || '#f59e0b');
 
@@ -589,11 +629,14 @@ class ContextMenu {
             this.commentFieldsText.style.display = type === 'text' ? 'flex' : 'none';
             this.commentFieldsLink.style.display = type === 'link' ? 'flex' : 'none';
             this.commentFieldsPoll.style.display = type === 'poll' ? 'flex' : 'none';
+            this.commentFieldsColor.style.display = type === 'color' ? 'flex' : 'none';
 
             if (type === 'link') {
                 setTimeout(() => this.commentUrlInput.focus(), 20);
             } else if (type === 'poll') {
                 setTimeout(() => this.commentPollTitleInput.focus(), 20);
+            } else if (type === 'color') {
+                setTimeout(() => this.commentHexInput.focus(), 20);
             } else {
                 setTimeout(() => this.commentTextarea.focus(), 20);
             }
@@ -602,6 +645,45 @@ class ContextMenu {
         this.commentTypeBtns.forEach(btn => {
             btn.onclick = () => applyTypeUI(btn.dataset.type);
         });
+
+        // Helper to sync hex, rgb, both pickers, preview circle, and active swatch
+        const clampByte = (v) => Math.max(0, Math.min(255, Math.round(Number(v) || 0)));
+        const rgbToHex = (r, g, b) => '#' + [clampByte(r), clampByte(g), clampByte(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+        const hexToRgb = (hex) => {
+            let c = (hex || '').replace('#', '').trim();
+            if (c.length === 3) c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+            if (!/^[0-9A-Fa-f]{6}$/.test(c)) return null;
+            const n = parseInt(c, 16);
+            return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+        };
+
+        const syncAllColorInputs = (hex, skipSource = null) => {
+            const rgb = hexToRgb(hex);
+            if (!rgb) return;
+            const normHex = rgbToHex(rgb.r, rgb.g, rgb.b);
+            selectedColor = normHex;
+
+            if (this.commentColorCirclePreview) {
+                this.commentColorCirclePreview.style.backgroundColor = normHex;
+            }
+            if (skipSource !== 'picker' && this.commentColorPicker) {
+                this.commentColorPicker.value = normHex;
+            }
+            if (skipSource !== 'pickerMain' && this.commentColorPickerMain) {
+                this.commentColorPickerMain.value = normHex;
+            }
+            if (skipSource !== 'hex' && this.commentHexInput) {
+                this.commentHexInput.value = normHex.toUpperCase();
+            }
+            if (skipSource !== 'rgb') {
+                if (this.commentRgbR) this.commentRgbR.value = rgb.r;
+                if (this.commentRgbG) this.commentRgbG.value = rgb.g;
+                if (this.commentRgbB) this.commentRgbB.value = rgb.b;
+            }
+            this.commentSwatchesRow.querySelectorAll('.comment-swatch-btn').forEach(b => {
+                b.classList.toggle('is-active', (b.title || '').toLowerCase() === normHex.toLowerCase());
+            });
+        };
 
         // Render color swatches
         this.commentSwatchesRow.innerHTML = '';
@@ -612,18 +694,31 @@ class ContextMenu {
             swatch.style.backgroundColor = hex;
             swatch.title = hex;
             swatch.addEventListener('click', () => {
-                selectedColor = hex;
-                this.commentColorPicker.value = hex;
-                this.commentSwatchesRow.querySelectorAll('.comment-swatch-btn').forEach(b => b.classList.remove('is-active'));
-                swatch.classList.add('is-active');
+                syncAllColorInputs(hex, 'swatch');
             });
             this.commentSwatchesRow.appendChild(swatch);
         });
 
-        this.commentColorPicker.oninput = (e) => {
-            selectedColor = e.target.value;
-            this.commentSwatchesRow.querySelectorAll('.comment-swatch-btn').forEach(b => b.classList.remove('is-active'));
+        this.commentColorPicker.oninput = (e) => syncAllColorInputs(e.target.value, 'picker');
+        this.commentColorPickerMain.oninput = (e) => syncAllColorInputs(e.target.value, 'pickerMain');
+
+        this.commentHexInput.oninput = (e) => {
+            let val = e.target.value.trim();
+            if (!val.startsWith('#')) val = '#' + val;
+            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                syncAllColorInputs(val, 'hex');
+            }
         };
+
+        const handleRgbInput = () => {
+            const hex = rgbToHex(this.commentRgbR.value, this.commentRgbG.value, this.commentRgbB.value);
+            syncAllColorInputs(hex, 'rgb');
+        };
+        this.commentRgbR.oninput = handleRgbInput;
+        this.commentRgbG.oninput = handleRgbInput;
+        this.commentRgbB.oninput = handleRgbInput;
+
+        syncAllColorInputs(selectedColor);
 
         // Rebind confirm button cleanly
         const newConfirmBtn = this.commentConfirmBtn.cloneNode(true);
@@ -656,6 +751,11 @@ class ContextMenu {
                 this.closeCommentModal();
                 if (onSubmit) {
                     onSubmit({ type: 'link', text: labelVal, url: urlVal, color: selectedColor, poll: null });
+                }
+            } else if (selectedType === 'color') {
+                this.closeCommentModal();
+                if (onSubmit) {
+                    onSubmit({ type: 'color', text: '', url: '', color: selectedColor, poll: null });
                 }
             } else {
                 const pollTitle = this.commentPollTitleInput.value.trim();
@@ -1379,9 +1479,44 @@ class ContextMenu {
             }
         });
 
+        if (comment.type === 'color') {
+            const hex = (comment.color || '#f59e0b').toUpperCase();
+            const rgb = this.commentManager.hexToRgb(hex);
+            items.push(
+                {
+                    label: `Copy HEX (${hex})`,
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    `,
+                    action: () => {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(hex).catch(() => {});
+                        }
+                    }
+                },
+                {
+                    label: `Copy RGB (${rgb.r}, ${rgb.g}, ${rgb.b})`,
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    `,
+                    action: () => {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(`rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`).catch(() => {});
+                        }
+                    }
+                }
+            );
+        }
+
         const title = comment.type === 'poll'
             ? 'Sondage'
-            : (comment.type === 'link' ? 'Link Comment' : 'Text Comment');
+            : (comment.type === 'color' ? 'Color' : (comment.type === 'link' ? 'Link Comment' : 'Text Comment'));
         this.renderMenu(title, items, x, y);
     }
 

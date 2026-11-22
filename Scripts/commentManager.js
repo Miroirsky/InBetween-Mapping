@@ -349,20 +349,29 @@ class CommentManager {
     }
 
     /**
-     * Converts hex color to rgba string.
+     * Converts hex color to { r, g, b } object.
      */
-    hexToRgba(hex, alpha) {
-        if (!hex || typeof hex !== 'string') return `rgba(245, 158, 11, ${alpha})`;
+    hexToRgb(hex) {
+        if (!hex || typeof hex !== 'string') return { r: 245, g: 158, b: 11 };
         let c = hex.replace('#', '').trim();
         if (c.length === 3) {
             c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
         }
-        if (c.length !== 6) return `rgba(245, 158, 11, ${alpha})`;
+        if (c.length !== 6) return { r: 245, g: 158, b: 11 };
         const num = parseInt(c, 16);
-        if (isNaN(num)) return `rgba(245, 158, 11, ${alpha})`;
-        const r = (num >> 16) & 255;
-        const g = (num >> 8) & 255;
-        const b = num & 255;
+        if (isNaN(num)) return { r: 245, g: 158, b: 11 };
+        return {
+            r: (num >> 16) & 255,
+            g: (num >> 8) & 255,
+            b: num & 255
+        };
+    }
+
+    /**
+     * Converts hex color to rgba string.
+     */
+    hexToRgba(hex, alpha) {
+        const { r, g, b } = this.hexToRgb(hex);
         return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
@@ -400,7 +409,7 @@ class CommentManager {
         const hasValidCustomId = customId !== null && customId !== undefined && Number.isFinite(Number(customId)) && Number(customId) > 0;
         const id = hasValidCustomId ? Math.floor(Number(customId)) : this.nextId;
 
-        const commentType = (type === 'link' || type === 'poll') ? type : 'text';
+        const commentType = (type === 'link' || type === 'poll' || type === 'color') ? type : 'text';
         const commentColor = color || this.config.defaultColor || '#f59e0b';
         const normalizedUrl = commentType === 'link' ? this.normalizeUrl(url) : '';
         const cleanText = typeof text === 'string' ? text.trim() : '';
@@ -518,13 +527,17 @@ class CommentManager {
         const el = comment.element;
         const contentEl = comment.contentElement;
 
-        el.classList.remove('comment-type-text', 'comment-type-link', 'comment-type-poll', 'poll-is-ended');
+        el.classList.remove('comment-type-text', 'comment-type-link', 'comment-type-poll', 'comment-type-color', 'poll-is-ended');
         el.classList.add(`comment-type-${comment.type}`);
         comment.timerElement = null;
 
         contentEl.innerHTML = '';
 
-        if (comment.type === 'poll' && comment.poll) {
+        if (comment.type === 'color') {
+            const hex = (comment.color || this.config.defaultColor || '#f59e0b').toUpperCase();
+            const { r, g, b } = this.hexToRgb(hex);
+            el.title = `${hex} • rgb(${r}, ${g}, ${b})`;
+        } else if (comment.type === 'poll' && comment.poll) {
             const poll = comment.poll;
             const ended = this.isPollEnded(comment);
             comment._renderedEnded = ended;
@@ -735,7 +748,14 @@ class CommentManager {
         const textColor = this.getContrastTextColor(color);
         const isDarkText = textColor !== '#ffffff';
 
-        el.style.backgroundColor = this.hexToRgba(color, 0.92);
+        if (comment.type === 'color') {
+            el.style.backgroundColor = color;
+            const hex = color.toUpperCase();
+            const { r, g, b } = this.hexToRgb(hex);
+            el.title = `${hex} • rgb(${r}, ${g}, ${b})`;
+        } else {
+            el.style.backgroundColor = this.hexToRgba(color, 0.92);
+        }
         el.style.color = textColor;
         el.style.borderColor = isDarkText ? 'rgba(15, 23, 42, 0.28)' : 'rgba(255, 255, 255, 0.28)';
         el.style.setProperty('--comment-accent', color);
@@ -752,7 +772,7 @@ class CommentManager {
         const comment = this.getCommentById(id);
         if (!comment) return false;
 
-        if (type === 'text' || type === 'link' || type === 'poll') {
+        if (type === 'text' || type === 'link' || type === 'poll' || type === 'color') {
             comment.type = type;
         }
         if (comment.type === 'poll') {
@@ -1424,7 +1444,22 @@ class CommentManager {
 
             let edgeX, edgeY, distToBorder, side;
 
-            if (!isInside) {
+            if (comment.type === 'color') {
+                // Circular border hover detection
+                const r = rect.halfW;
+                const dx = boardX - rect.cx;
+                const dy = boardY - rect.cy;
+                const dist = Math.hypot(dx, dy);
+                const innerBand = Math.min(innerMargin, r * 0.45);
+                if (dist > r + outerMargin || dist < Math.max(4, r - innerBand)) {
+                    continue;
+                }
+                distToBorder = Math.abs(dist - r);
+                const angle = dist > 0.001 ? Math.atan2(dy, dx) : 0;
+                edgeX = rect.cx + Math.cos(angle) * r;
+                edgeY = rect.cy + Math.sin(angle) * r;
+                side = 'circle';
+            } else if (!isInside) {
                 // Closest point on rectangle perimeter
                 edgeX = Math.max(rect.left, Math.min(rect.right, boardX));
                 edgeY = Math.max(rect.top, Math.min(rect.bottom, boardY));
@@ -1579,8 +1614,9 @@ class CommentManager {
                 endY = hoveredBubble.y;
             }
         } else if (hoveredTargetInfo && hoveredTargetInfo.type === 'comment') {
-            const targetRect = this.getCommentRect(hoveredTargetInfo.target);
-            const edgePt = this.getRectEdgeIntersection(targetRect, startX, startY);
+            const targetComment = hoveredTargetInfo.target;
+            const targetRect = this.getCommentRect(targetComment);
+            const edgePt = this.getRectEdgeIntersection(targetRect, startX, startY, targetComment.type === 'color');
             endX = edgePt.x;
             endY = edgePt.y;
         }
@@ -1704,13 +1740,22 @@ class CommentManager {
     }
 
     /**
-     * Computes where a ray from the comment center toward (targetX, targetY) exits the comment rectangle.
+     * Computes where a ray from the comment center toward (targetX, targetY) exits the comment border
+     * (exact circle perimeter for color comments, rectangle perimeter for others).
      */
-    getRectEdgeIntersection(rect, targetX, targetY) {
+    getRectEdgeIntersection(rect, targetX, targetY, isCircle = false) {
         const dx = targetX - rect.cx;
         const dy = targetY - rect.cy;
-        if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+        const dist = Math.hypot(dx, dy);
+        if (dist < 0.001) {
             return { x: rect.cx, y: rect.cy };
+        }
+        if (isCircle) {
+            const r = rect.halfW;
+            return {
+                x: rect.cx + (dx / dist) * r,
+                y: rect.cy + (dy / dist) * r
+            };
         }
         const tx = Math.abs(dx) > 0.001 ? rect.halfW / Math.abs(dx) : Infinity;
         const ty = Math.abs(dy) > 0.001 ? rect.halfH / Math.abs(dy) : Infinity;
@@ -1847,7 +1892,7 @@ class CommentManager {
                 continue;
             }
 
-            const startPt = this.getRectEdgeIntersection(rect, bubble.x, bubble.y);
+            const startPt = this.getRectEdgeIntersection(rect, bubble.x, bubble.y, comment.type === 'color');
             const startDistFromCenter = Math.hypot(startPt.x - rect.cx, startPt.y - rect.cy);
 
             if (centerDist <= startDistFromCenter + bubbleRadius) {
@@ -1895,8 +1940,8 @@ class CommentManager {
                 continue;
             }
 
-            const startPt = this.getRectEdgeIntersection(fromRect, toRect.cx, toRect.cy);
-            const endPt = this.getRectEdgeIntersection(toRect, fromRect.cx, fromRect.cy);
+            const startPt = this.getRectEdgeIntersection(fromRect, toRect.cx, toRect.cy, fromComment.type === 'color');
+            const endPt = this.getRectEdgeIntersection(toRect, fromRect.cx, fromRect.cy, toComment.type === 'color');
             const startDist = Math.hypot(startPt.x - fromRect.cx, startPt.y - fromRect.cy);
             const endDist = Math.hypot(endPt.x - toRect.cx, endPt.y - toRect.cy);
 
@@ -1968,7 +2013,7 @@ class CommentManager {
             .map(c => {
                 const base = {
                     id: Math.floor(Number(c.id)),
-                    type: (c.type === 'link' || c.type === 'poll') ? c.type : 'text',
+                    type: (c.type === 'link' || c.type === 'poll' || c.type === 'color') ? c.type : 'text',
                     text: c.text || '',
                     url: c.url || '',
                     color: c.color || this.config.defaultColor || '#f59e0b',

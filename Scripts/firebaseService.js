@@ -170,7 +170,7 @@ class FirebaseService {
         }
 
         const id = Math.floor(rawId);
-        const type = (c.type === 'link' || c.type === 'poll') ? c.type : 'text';
+        const type = (c.type === 'link' || c.type === 'poll' || c.type === 'color') ? c.type : 'text';
         const attachedRaw = c.attachedBubbleId !== undefined && c.attachedBubbleId !== null && c.attachedBubbleId !== ''
             ? Number(c.attachedBubbleId)
             : null;
