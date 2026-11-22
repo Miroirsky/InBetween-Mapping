@@ -107,6 +107,7 @@ class CommentManager {
                 ],
                 deadline: null,
                 isClosed: false,
+                allowMultiple: false,
                 creatorId: this.getCurrentVoterId()
             };
         }
@@ -147,6 +148,7 @@ class CommentManager {
             options,
             deadline: (rawDeadline !== null && Number.isFinite(rawDeadline) && rawDeadline > 0) ? Math.floor(rawDeadline) : null,
             isClosed: !!pollInput.isClosed,
+            allowMultiple: !!pollInput.allowMultiple,
             creatorId: (typeof pollInput.creatorId === 'string' && pollInput.creatorId.trim()) ? pollInput.creatorId.trim() : this.getCurrentVoterId()
         };
     }
@@ -190,17 +192,26 @@ class CommentManager {
 
         const alreadyVotedThis = !!(targetOpt.votes && targetOpt.votes[voterId]);
 
-        // Single-choice voting: remove voter from all options first
-        for (const opt of comment.poll.options) {
-            if (opt.votes && opt.votes[voterId]) {
-                delete opt.votes[voterId];
+        if (comment.poll.allowMultiple) {
+            // Multiple-choice voting: toggle this option independently
+            if (alreadyVotedThis) {
+                delete targetOpt.votes[voterId];
+            } else {
+                if (!targetOpt.votes) targetOpt.votes = {};
+                targetOpt.votes[voterId] = true;
             }
-        }
+        } else {
+            // Single-choice voting: remove voter from all options first
+            for (const opt of comment.poll.options) {
+                if (opt.votes && opt.votes[voterId]) {
+                    delete opt.votes[voterId];
+                }
+            }
 
-        // Toggle vote if clicking a new option
-        if (!alreadyVotedThis) {
-            if (!targetOpt.votes) targetOpt.votes = {};
-            targetOpt.votes[voterId] = true;
+            if (!alreadyVotedThis) {
+                if (!targetOpt.votes) targetOpt.votes = {};
+                targetOpt.votes[voterId] = true;
+            }
         }
 
         this.applyCommentContent(comment);
@@ -225,6 +236,32 @@ class CommentManager {
         if (comment.poll.isClosed) return false;
 
         comment.poll.isClosed = true;
+        this.applyCommentContent(comment);
+        this.renderConnections();
+
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentUpdated(comment);
+        }
+        if (this.savingManager) {
+            this.savingManager.saveSessionSnapshot();
+        }
+        return true;
+    }
+
+    /**
+     * Reopens/continues an ended poll (creator only). Clears an expired deadline so voting stays open.
+     */
+    reopenPoll(commentId) {
+        const comment = this.getCommentById(commentId);
+        if (!comment || comment.type !== 'poll' || !comment.poll) return false;
+        if (!this.isPollCreator(comment)) return false;
+        if (!this.isPollEnded(comment)) return false;
+
+        comment.poll.isClosed = false;
+        if (comment.poll.deadline !== null && Date.now() >= Number(comment.poll.deadline)) {
+            comment.poll.deadline = null;
+        }
+
         this.applyCommentContent(comment);
         this.renderConnections();
 
@@ -595,20 +632,34 @@ class CommentManager {
 
             const votesInfo = document.createElement('span');
             votesInfo.className = 'poll-total-votes';
-            votesInfo.textContent = `${totalVotes} vote${totalVotes > 1 ? 's' : ''}`;
+            const multiTag = poll.allowMultiple ? ' • Choix multiple' : '';
+            votesInfo.textContent = `${totalVotes} vote${totalVotes > 1 ? 's' : ''}${multiTag}`;
             footer.appendChild(votesInfo);
 
-            if (!ended && isCreator) {
-                const endBtn = document.createElement('button');
-                endBtn.type = 'button';
-                endBtn.className = 'poll-end-btn';
-                endBtn.textContent = 'Terminer';
-                endBtn.title = 'Terminer le sondage maintenant';
-                endBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.endPoll(comment.id);
-                });
-                footer.appendChild(endBtn);
+            if (isCreator) {
+                if (!ended) {
+                    const endBtn = document.createElement('button');
+                    endBtn.type = 'button';
+                    endBtn.className = 'poll-end-btn';
+                    endBtn.textContent = 'Terminer';
+                    endBtn.title = 'Terminer le sondage maintenant';
+                    endBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.endPoll(comment.id);
+                    });
+                    footer.appendChild(endBtn);
+                } else {
+                    const reopenBtn = document.createElement('button');
+                    reopenBtn.type = 'button';
+                    reopenBtn.className = 'poll-end-btn poll-reopen-btn';
+                    reopenBtn.textContent = 'Continuer';
+                    reopenBtn.title = 'Reprendre le sondage';
+                    reopenBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.reopenPoll(comment.id);
+                    });
+                    footer.appendChild(reopenBtn);
+                }
             }
 
             wrapper.appendChild(footer);
@@ -1937,6 +1988,7 @@ class CommentManager {
                         })),
                         deadline: c.poll.deadline !== null && Number.isFinite(Number(c.poll.deadline)) ? Math.floor(Number(c.poll.deadline)) : null,
                         isClosed: !!c.poll.isClosed,
+                        allowMultiple: !!c.poll.allowMultiple,
                         creatorId: c.poll.creatorId || this.localUserId
                     };
                 }

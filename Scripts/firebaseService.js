@@ -209,6 +209,7 @@ class FirebaseService {
                 options: cleanOptions,
                 deadline: (rawDeadline !== null && Number.isFinite(rawDeadline) && rawDeadline > 0) ? Math.floor(rawDeadline) : null,
                 isClosed: !!c.poll.isClosed,
+                allowMultiple: !!c.poll.allowMultiple,
                 creatorId: (typeof c.poll.creatorId === 'string' && c.poll.creatorId.trim()) ? c.poll.creatorId.trim() : 'local'
             };
         }

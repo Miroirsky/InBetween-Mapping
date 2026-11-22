@@ -389,6 +389,10 @@ class ContextMenu {
                         <div id="comment-modal-poll-options" class="poll-modal-options-list"></div>
                         <div class="poll-deadline-section">
                             <label class="poll-deadline-toggle">
+                                <input type="checkbox" id="comment-modal-poll-multi">
+                                <span>Autoriser plusieurs votes (choix multiple)</span>
+                            </label>
+                            <label class="poll-deadline-toggle">
                                 <input type="checkbox" id="comment-modal-poll-has-deadline">
                                 <span>Date limite (heure locale)</span>
                             </label>
@@ -424,6 +428,7 @@ class ContextMenu {
         this.commentPollTitleInput = modal.querySelector('#comment-modal-poll-title');
         this.commentPollOptionsList = modal.querySelector('#comment-modal-poll-options');
         this.commentPollAddOptionBtn = modal.querySelector('#comment-modal-add-option');
+        this.commentPollMultiCheckbox = modal.querySelector('#comment-modal-poll-multi');
         this.commentPollHasDeadline = modal.querySelector('#comment-modal-poll-has-deadline');
         this.commentPollDeadlineInput = modal.querySelector('#comment-modal-poll-deadline');
         this.commentSwatchesRow = modal.querySelector('#comment-modal-swatches');
@@ -557,6 +562,9 @@ class ContextMenu {
             if (inputs.length > 0) inputs[inputs.length - 1].focus();
         };
 
+        // Multiple choice checkbox
+        this.commentPollMultiCheckbox.checked = !!(existingPoll && existingPoll.allowMultiple);
+
         // Deadline checkbox & datetime-local input (local time)
         const hasExistingDeadline = !!(existingPoll && existingPoll.deadline !== null && Number.isFinite(Number(existingPoll.deadline)));
         this.commentPollHasDeadline.checked = hasExistingDeadline;
@@ -685,6 +693,7 @@ class ContextMenu {
                     options: cleanOptions,
                     deadline: deadlineMs,
                     isClosed: existingPoll ? !!existingPoll.isClosed : false,
+                    allowMultiple: !!this.commentPollMultiCheckbox.checked,
                     creatorId: existingPoll && existingPoll.creatorId
                         ? existingPoll.creatorId
                         : (this.commentManager ? this.commentManager.getCurrentVoterId() : 'local')
@@ -1293,18 +1302,32 @@ class ContextMenu {
             });
         }
 
-        if (comment.type === 'poll' && !this.commentManager.isPollEnded(comment) && this.commentManager.isPollCreator(comment)) {
-            items.push({
-                label: 'Terminer le sondage',
-                icon: `
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="6" y="6" width="12" height="12" rx="2"></rect>
-                    </svg>
-                `,
-                action: () => {
-                    this.commentManager.endPoll(commentId);
-                }
-            });
+        if (comment.type === 'poll' && this.commentManager.isPollCreator(comment)) {
+            if (!this.commentManager.isPollEnded(comment)) {
+                items.push({
+                    label: 'Terminer le sondage',
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                        </svg>
+                    `,
+                    action: () => {
+                        this.commentManager.endPoll(commentId);
+                    }
+                });
+            } else {
+                items.push({
+                    label: 'Continuer le sondage',
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                    `,
+                    action: () => {
+                        this.commentManager.reopenPoll(commentId);
+                    }
+                });
+            }
         }
 
         if (comment.attachedBubbleId !== null) {
