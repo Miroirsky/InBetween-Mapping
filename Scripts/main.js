@@ -46,13 +46,24 @@ document.addEventListener('DOMContentLoaded', () => {
         bubbleManager.setConnectionManager(connectionManager);
     }
 
+    // 3.5 Comments Setup
+    const commentContainer = document.getElementById('comment-container');
+    const commentSvgLayer = document.getElementById('comment-connection-svg-layer');
+    const commentConfig = window.CommentConfig;
+    let commentManager = null;
+
+    if (window.CommentManager && commentContainer && commentSvgLayer) {
+        commentManager = new window.CommentManager(commentContainer, commentSvgLayer, bubbleManager, commentConfig);
+        bubbleManager.setCommentManager(commentManager);
+    }
+
     // 4. Physics Simulation Setup
-    const bubblePhysics = new window.BubblePhysics(bubbleManager, bubbleConfig, connectionManager, connectionConfig);
+    const bubblePhysics = new window.BubblePhysics(bubbleManager, bubbleConfig, connectionManager, connectionConfig, commentManager);
     bubblePhysics.start();
 
     // 5. Context Menu & Interaction Setup
-    const contextMenu = new window.ContextMenu(bubbleManager, connectionManager);
-    const interactionManager = new window.InteractionManager(bubbleManager, contextMenu, connectionManager);
+    const contextMenu = new window.ContextMenu(bubbleManager, connectionManager, commentManager);
+    const interactionManager = new window.InteractionManager(bubbleManager, contextMenu, connectionManager, commentManager);
 
     if (renderer) {
         interactionManager.setNoiseRenderer(renderer);
@@ -85,6 +96,10 @@ document.addEventListener('DOMContentLoaded', () => {
         );
         savingManager.setContextMenu(contextMenu);
         bubbleManager.setSavingManager(savingManager);
+        if (commentManager) {
+            savingManager.setCommentManager(commentManager);
+            commentManager.setSavingManager(savingManager);
+        }
     }
 
     if (window.ExportManager && savingManager) {
@@ -100,6 +115,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         );
         savingManager.setExportManager(exportManager);
+        if (commentManager) {
+            exportManager.setCommentManager(commentManager);
+        }
     }
 
     if (savingManager) {
@@ -154,6 +172,8 @@ document.addEventListener('DOMContentLoaded', () => {
         bubbleConfig,
         connectionManager,
         connectionConfig,
+        commentManager,
+        commentConfig,
         contextMenu,
         interactionManager,
         windowConfig,

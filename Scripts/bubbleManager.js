@@ -10,6 +10,7 @@ class BubbleManager {
         this.container = container;
         this.config = config;
         this.connectionManager = null;
+        this.commentManager = null;
         this.savingManager = null;
         this.onlineManager = null;
         this.bubbles = [];
@@ -25,6 +26,10 @@ class BubbleManager {
 
     setConnectionManager(connectionManager) {
         this.connectionManager = connectionManager;
+    }
+
+    setCommentManager(commentManager) {
+        this.commentManager = commentManager;
     }
 
     setSavingManager(savingManager) {
@@ -156,6 +161,9 @@ class BubbleManager {
 
         if (this.connectionManager) {
             this.connectionManager.render();
+        }
+        if (this.commentManager) {
+            this.commentManager.renderConnections();
         }
 
         if (syncOnline && this.onlineManager && this.onlineManager.isOnline) {
@@ -345,6 +353,9 @@ class BubbleManager {
         if (this.connectionManager) {
             this.connectionManager.reset();
         }
+        if (this.commentManager) {
+            this.commentManager.clearAll();
+        }
         this.container.innerHTML = '';
         this.bubbles = [];
         this.nextId = 1;
@@ -428,6 +439,9 @@ class BubbleManager {
             if (this.connectionManager) {
                 this.connectionManager.removeConnectionsForBubble(targetId);
             }
+            if (this.commentManager) {
+                this.commentManager.detachCommentsForBubble(targetId);
+            }
 
             if (this.onlineManager && this.onlineManager.isOnline) {
                 this.onlineManager.onBubbleRemoved(targetId);
@@ -485,6 +499,9 @@ class BubbleManager {
 
         if (this.connectionManager) {
             this.connectionManager.reset();
+        }
+        if (this.commentManager) {
+            this.commentManager.clearAll();
         }
 
         for (const el of oldElements) {

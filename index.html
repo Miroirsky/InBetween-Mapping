@@ -15,8 +15,14 @@
         <!-- 2. Connections SVG Layer (z-index: 5) -->
         <svg id="connection-svg-layer" viewBox="0 0 1000 1000" width="1000" height="1000"></svg>
 
+        <!-- 2.5 Comment Connections SVG Layer (z-index: 6) -->
+        <svg id="comment-connection-svg-layer" viewBox="0 0 1000 1000" width="1000" height="1000"></svg>
+
         <!-- 3. Universe Bubbles Interactive Container (z-index: 10) -->
         <div id="bubble-container"></div>
+
+        <!-- 4. Board Comments Interactive Container (z-index: 12) -->
+        <div id="comment-container"></div>
     </div>
 
     <!-- Firebase SDK (Compat) -->
@@ -28,6 +34,7 @@
     <script src="Values/noiseConfig.js"></script>
     <script src="Values/bubbleConfig.js"></script>
     <script src="Values/connectionConfig.js"></script>
+    <script src="Values/commentConfig.js"></script>
     <script src="Values/windowConfig.js"></script>
     <script src="Values/exportConfig.js"></script>
     <script src="Values/firebaseConfig.js"></script>
@@ -47,9 +54,10 @@
     <script src="Scripts/perlinShader.js"></script>
     <script src="Scripts/noiseRenderer.js"></script>
 
-    <!-- Universe Bubbles, Connections, Physics & Interaction -->
+    <!-- Universe Bubbles, Connections, Comments, Physics & Interaction -->
     <script src="Scripts/bubbleManager.js"></script>
     <script src="Scripts/connectionManager.js"></script>
+    <script src="Scripts/commentManager.js"></script>
     <script src="Scripts/physics.js"></script>
     <script src="Scripts/contextMenu.js"></script>
     <script src="Scripts/interaction.js"></script>

@@ -6,13 +6,15 @@
  */
 
 class ContextMenu {
-    constructor(bubbleManager, connectionManager) {
+    constructor(bubbleManager, connectionManager, commentManager = null) {
         this.manager = bubbleManager;
         this.connectionManager = connectionManager || null;
+        this.commentManager = commentManager || null;
         this.menuElement = null;
         this.modalElement = null;
         this.colorModalElement = null;
         this.confirmModalElement = null;
+        this.commentModalElement = null;
         this.activeTargetBubbleId = null;
         this.isOpen = false;
 
@@ -20,11 +22,16 @@ class ContextMenu {
         this.createModalDOM();
         this.createColorModalDOM();
         this.createConfirmModalDOM();
+        this.createCommentModalDOM();
         this.bindGlobalEvents();
     }
 
     setConnectionManager(connectionManager) {
         this.connectionManager = connectionManager;
+    }
+
+    setCommentManager(commentManager) {
+        this.commentManager = commentManager;
     }
 
     createMenuDOM() {
@@ -330,6 +337,209 @@ class ContextMenu {
         }
     }
 
+    createCommentModalDOM() {
+        const modal = document.createElement('div');
+        modal.id = 'custom-comment-modal';
+        modal.className = 'custom-input-modal-backdrop';
+        modal.innerHTML = `
+            <div class="custom-modal-card comment-modal-card">
+                <div class="modal-header">
+                    <h3 id="comment-modal-title" class="modal-title">Create Comment</h3>
+                </div>
+                <div class="modal-body comment-modal-body">
+                    <div class="comment-type-selector" role="tablist" aria-label="Comment Type">
+                        <button type="button" class="comment-type-btn is-active" data-type="text">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            <span>Text</span>
+                        </button>
+                        <button type="button" class="comment-type-btn" data-type="link">
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                            </svg>
+                            <span>Link</span>
+                        </button>
+                    </div>
+
+                    <div id="comment-fields-text" class="comment-fields-group">
+                        <textarea id="comment-modal-textarea" class="modal-input modal-textarea" rows="3" maxlength="500" placeholder="Write your comment..."></textarea>
+                    </div>
+
+                    <div id="comment-fields-link" class="comment-fields-group" style="display: none;">
+                        <input type="text" id="comment-modal-url" class="modal-input" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://example.com">
+                        <input type="text" id="comment-modal-link-label" class="modal-input" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Display label (optional)">
+                    </div>
+
+                    <div class="comment-color-section">
+                        <span class="comment-color-label">Color</span>
+                        <div class="comment-color-row">
+                            <div id="comment-modal-swatches" class="comment-swatches-row"></div>
+                            <input type="color" id="comment-modal-color-picker" class="comment-color-picker" value="#f59e0b" title="Custom color">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="comment-modal-cancel-btn" class="modal-btn secondary">Cancel</button>
+                    <button type="button" id="comment-modal-confirm-btn" class="modal-btn primary">Create</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        this.commentModalElement = modal;
+
+        this.commentModalTitle = modal.querySelector('#comment-modal-title');
+        this.commentTypeBtns = modal.querySelectorAll('.comment-type-btn');
+        this.commentFieldsText = modal.querySelector('#comment-fields-text');
+        this.commentFieldsLink = modal.querySelector('#comment-fields-link');
+        this.commentTextarea = modal.querySelector('#comment-modal-textarea');
+        this.commentUrlInput = modal.querySelector('#comment-modal-url');
+        this.commentLinkLabelInput = modal.querySelector('#comment-modal-link-label');
+        this.commentSwatchesRow = modal.querySelector('#comment-modal-swatches');
+        this.commentColorPicker = modal.querySelector('#comment-modal-color-picker');
+        this.commentCancelBtn = modal.querySelector('#comment-modal-cancel-btn');
+        this.commentConfirmBtn = modal.querySelector('#comment-modal-confirm-btn');
+
+        this.commentCancelBtn.addEventListener('click', () => this.closeCommentModal());
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                this.closeCommentModal();
+            }
+        });
+
+        this.commentTextarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                this.commentConfirmBtn.click();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                this.closeCommentModal();
+            }
+        });
+
+        [this.commentUrlInput, this.commentLinkLabelInput].forEach(input => {
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.commentConfirmBtn.click();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    this.closeCommentModal();
+                }
+            });
+        });
+    }
+
+    /**
+     * Opens the comment creation / editing modal with Text & Link type selection and color picker.
+     */
+    showCommentModal({ mode = 'create', comment = null, onSubmit }) {
+        this.close();
+
+        const isEdit = mode === 'edit' && comment;
+        const cfg = (this.commentManager && this.commentManager.config) || window.CommentConfig || {};
+        const presets = Array.isArray(cfg.presetColors) && cfg.presetColors.length > 0
+            ? cfg.presetColors
+            : ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#ef4444', '#06b6d4', '#84cc16', '#334155', '#18181b'];
+
+        let selectedType = isEdit ? (comment.type === 'link' ? 'link' : 'text') : 'text';
+        let selectedColor = (isEdit && comment.color) ? comment.color : (cfg.defaultColor || '#f59e0b');
+
+        this.commentModalTitle.textContent = isEdit ? 'Edit Comment' : 'Create Comment';
+        this.commentTextarea.value = isEdit && selectedType === 'text' ? (comment.text || '') : '';
+        this.commentUrlInput.value = isEdit && selectedType === 'link' ? (comment.url || '') : '';
+        this.commentLinkLabelInput.value = isEdit && selectedType === 'link' ? (comment.text || '') : '';
+        this.commentColorPicker.value = selectedColor;
+
+        const applyTypeUI = (type) => {
+            selectedType = type;
+            this.commentTypeBtns.forEach(btn => {
+                btn.classList.toggle('is-active', btn.dataset.type === type);
+            });
+            if (type === 'link') {
+                this.commentFieldsText.style.display = 'none';
+                this.commentFieldsLink.style.display = 'flex';
+                setTimeout(() => this.commentUrlInput.focus(), 20);
+            } else {
+                this.commentFieldsText.style.display = 'flex';
+                this.commentFieldsLink.style.display = 'none';
+                setTimeout(() => this.commentTextarea.focus(), 20);
+            }
+        };
+
+        this.commentTypeBtns.forEach(btn => {
+            btn.onclick = () => applyTypeUI(btn.dataset.type);
+        });
+
+        // Render color swatches
+        this.commentSwatchesRow.innerHTML = '';
+        presets.forEach(hex => {
+            const swatch = document.createElement('button');
+            swatch.type = 'button';
+            swatch.className = `comment-swatch-btn ${hex.toLowerCase() === selectedColor.toLowerCase() ? 'is-active' : ''}`;
+            swatch.style.backgroundColor = hex;
+            swatch.title = hex;
+            swatch.addEventListener('click', () => {
+                selectedColor = hex;
+                this.commentColorPicker.value = hex;
+                this.commentSwatchesRow.querySelectorAll('.comment-swatch-btn').forEach(b => b.classList.remove('is-active'));
+                swatch.classList.add('is-active');
+            });
+            this.commentSwatchesRow.appendChild(swatch);
+        });
+
+        this.commentColorPicker.oninput = (e) => {
+            selectedColor = e.target.value;
+            this.commentSwatchesRow.querySelectorAll('.comment-swatch-btn').forEach(b => b.classList.remove('is-active'));
+        };
+
+        // Rebind confirm button cleanly
+        const newConfirmBtn = this.commentConfirmBtn.cloneNode(true);
+        newConfirmBtn.textContent = isEdit ? 'Save' : 'Create';
+        this.commentConfirmBtn.parentNode.replaceChild(newConfirmBtn, this.commentConfirmBtn);
+        this.commentConfirmBtn = newConfirmBtn;
+
+        this.commentConfirmBtn.addEventListener('click', () => {
+            if (selectedType === 'text') {
+                const textVal = this.commentTextarea.value.trim();
+                if (!textVal) {
+                    this.commentTextarea.focus();
+                    this.commentTextarea.classList.add('input-error');
+                    setTimeout(() => this.commentTextarea.classList.remove('input-error'), 400);
+                    return;
+                }
+                this.closeCommentModal();
+                if (onSubmit) {
+                    onSubmit({ type: 'text', text: textVal, url: '', color: selectedColor });
+                }
+            } else {
+                const urlVal = this.commentUrlInput.value.trim();
+                const labelVal = this.commentLinkLabelInput.value.trim();
+                if (!urlVal) {
+                    this.commentUrlInput.focus();
+                    this.commentUrlInput.classList.add('input-error');
+                    setTimeout(() => this.commentUrlInput.classList.remove('input-error'), 400);
+                    return;
+                }
+                this.closeCommentModal();
+                if (onSubmit) {
+                    onSubmit({ type: 'link', text: labelVal, url: urlVal, color: selectedColor });
+                }
+            }
+        });
+
+        applyTypeUI(selectedType);
+        this.commentModalElement.classList.add('visible');
+    }
+
+    closeCommentModal() {
+        if (this.commentModalElement) {
+            this.commentModalElement.classList.remove('visible');
+        }
+    }
+
     bindGlobalEvents() {
         // Dismiss on left click outside
         window.addEventListener('click', (e) => {
@@ -345,6 +555,7 @@ class ContextMenu {
                 if (this.modalElement && this.modalElement.classList.contains('visible')) this.closeModal();
                 if (this.colorModalElement && this.colorModalElement.classList.contains('visible')) this.closeColorModal();
                 if (this.confirmModalElement && this.confirmModalElement.classList.contains('visible')) this.closeConfirmModal();
+                if (this.commentModalElement && this.commentModalElement.classList.contains('visible')) this.closeCommentModal();
             }
         });
 
@@ -384,6 +595,32 @@ class ContextMenu {
                         confirmText: 'Create',
                         onSubmit: (name) => {
                             this.manager.createBubble(boardX, boardY, name);
+                        }
+                    });
+                }
+            },
+            {
+                label: 'Create a Comment',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        <line x1="12" y1="8" x2="12" y2="14"></line>
+                        <line x1="9" y1="11" x2="15" y2="11"></line>
+                    </svg>
+                `,
+                action: () => {
+                    if (!this.commentManager) return;
+                    this.showCommentModal({
+                        mode: 'create',
+                        onSubmit: ({ type, text, url, color }) => {
+                            this.commentManager.createComment({
+                                x: boardX,
+                                y: boardY,
+                                type,
+                                text,
+                                url,
+                                color
+                            });
                         }
                     });
                 }
@@ -841,6 +1078,115 @@ class ContextMenu {
         );
 
         this.renderMenu(conn.name || 'Connection', items, x, y);
+    }
+
+    /**
+     * Show menu for comment right-click
+     */
+    showCommentMenu(x, y, commentId) {
+        if (!this.commentManager) return;
+        const comment = this.commentManager.getCommentById(commentId);
+        if (!comment) return;
+
+        const items = [
+            {
+                label: 'Edit Comment',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 20h9"></path>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                    </svg>
+                `,
+                action: () => {
+                    this.showCommentModal({
+                        mode: 'edit',
+                        comment,
+                        onSubmit: ({ type, text, url, color }) => {
+                            this.commentManager.updateComment(commentId, { type, text, url, color });
+                        }
+                    });
+                }
+            }
+        ];
+
+        if (comment.type === 'link' && comment.url) {
+            items.push({
+                label: 'Open Link',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                `,
+                action: () => {
+                    this.commentManager.openCommentLink(commentId);
+                }
+            });
+        }
+
+        if (comment.attachedBubbleId !== null) {
+            items.push({
+                label: 'Detach from Bubble',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18.84 12.25l1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"></path>
+                        <path d="M5.17 11.75l-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"></path>
+                        <line x1="8" y1="2" x2="8" y2="5"></line>
+                        <line x1="2" y1="8" x2="5" y2="8"></line>
+                        <line x1="16" y1="19" x2="16" y2="22"></line>
+                        <line x1="19" y1="16" x2="22" y2="16"></line>
+                    </svg>
+                `,
+                action: () => {
+                    this.commentManager.detachComment(commentId);
+                }
+            });
+        }
+
+        items.push({
+            label: 'Remove Comment',
+            danger: true,
+            icon: `
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            `,
+            action: () => {
+                this.commentManager.removeComment(commentId);
+            }
+        });
+
+        const title = comment.type === 'link' ? 'Link Comment' : 'Text Comment';
+        this.renderMenu(title, items, x, y);
+    }
+
+    /**
+     * Show menu for comment connection line right-click
+     */
+    showCommentConnectionMenu(x, y, commentId) {
+        if (!this.commentManager) return;
+        const comment = this.commentManager.getCommentById(commentId);
+        if (!comment) return;
+
+        const items = [
+            {
+                label: 'Detach Comment',
+                danger: true,
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                `,
+                action: () => {
+                    this.commentManager.detachComment(commentId);
+                }
+            }
+        ];
+
+        this.renderMenu('Comment Attachment', items, x, y);
     }
 
     renderMenu(title, items, x, y) {

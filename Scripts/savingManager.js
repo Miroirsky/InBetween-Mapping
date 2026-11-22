@@ -22,6 +22,7 @@ class SavingManager {
         this.activeBoardName = null;
         this.contextMenu = null;
         this.exportManager = null;
+        this.commentManager = null;
 
         this.window = null;
         this.activeBoardWidget = null;
@@ -44,6 +45,10 @@ class SavingManager {
 
     setExportManager(exportManager) {
         this.exportManager = exportManager;
+    }
+
+    setCommentManager(commentManager) {
+        this.commentManager = commentManager;
     }
 
     /**
@@ -288,6 +293,8 @@ class SavingManager {
                 targetLength: (c.targetLength !== null && c.targetLength !== undefined && Number.isFinite(Number(c.targetLength))) ? Number(c.targetLength) : null
             }));
 
+        const comments = this.commentManager ? this.commentManager.serializeComments() : [];
+
         const noiseData = this.noiseConfig ? {
             noiseSize: this.noiseConfig.noiseSize,
             noiseSpeed: this.noiseConfig.noiseSpeed,
@@ -297,7 +304,7 @@ class SavingManager {
             maintainAspectRatio: !!this.noiseConfig.maintainAspectRatio
         } : null;
 
-        return { bubbles, connections, noiseData };
+        return { bubbles, connections, comments, noiseData };
     }
 
     /**
@@ -309,13 +316,14 @@ class SavingManager {
             return;
         }
 
-        const { bubbles, connections, noiseData } = this.serializeCurrentState();
+        const { bubbles, connections, comments, noiseData } = this.serializeCurrentState();
         const sessionData = {
             activeBoardId: this.activeBoardId,
             activeBoardName: this.activeBoardName,
             timestamp: Date.now(),
             bubbles,
             connections,
+            comments,
             noiseConfig: noiseData
         };
 
@@ -342,18 +350,26 @@ class SavingManager {
 
             if (rawSession) {
                 const session = JSON.parse(rawSession);
-                if (session && Array.isArray(session.bubbles) && session.bubbles.length > 0) {
+                const hasBubbles = session && Array.isArray(session.bubbles) && session.bubbles.length > 0;
+                const hasComments = session && Array.isArray(session.comments) && session.comments.length > 0;
+                if (hasBubbles || hasComments) {
                     // Restore from session snapshot
                     this.bubbleManager.clearBoard();
 
-                    session.bubbles.forEach(b => {
-                        this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked, b.scale, b.description || '');
-                    });
+                    if (Array.isArray(session.bubbles)) {
+                        session.bubbles.forEach(b => {
+                            this.bubbleManager.createBubble(b.x, b.y, b.name, b.color, b.id, b.isLocked, b.scale, b.description || '');
+                        });
+                    }
 
                     if (this.connectionManager && Array.isArray(session.connections)) {
                         session.connections.forEach(c => {
                             this.connectionManager.createConnection(c.fromId, c.toId, c.name, c.id || null, c.targetLength || null);
                         });
+                    }
+
+                    if (this.commentManager && Array.isArray(session.comments)) {
+                        this.commentManager.loadComments(session.comments);
                     }
 
                     if (session.noiseConfig && this.noiseConfig) {
@@ -456,7 +472,7 @@ class SavingManager {
             return true;
         }
 
-        const { bubbles, connections, noiseData } = this.serializeCurrentState();
+        const { bubbles, connections, comments, noiseData } = this.serializeCurrentState();
 
         if (this.activeBoardId) {
             const saves = this.getAllSaves();
@@ -465,6 +481,7 @@ class SavingManager {
             if (record) {
                 record.bubbles = bubbles;
                 record.connections = connections;
+                record.comments = comments;
                 record.noiseConfig = noiseData;
                 record.updatedAt = Date.now();
 
@@ -541,7 +558,7 @@ class SavingManager {
     }
 
     saveCurrentBoard(name) {
-        const { bubbles, connections, noiseData } = this.serializeCurrentState();
+        const { bubbles, connections, comments, noiseData } = this.serializeCurrentState();
 
         const boardRecord = {
             id: `board_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -549,6 +566,7 @@ class SavingManager {
             createdAt: Date.now(),
             bubbles,
             connections,
+            comments,
             noiseConfig: noiseData
         };
 
@@ -586,6 +604,11 @@ class SavingManager {
             record.connections.forEach(c => {
                 this.connectionManager.createConnection(c.fromId, c.toId, c.name, c.id || null, c.targetLength || null);
             });
+        }
+
+        // 3.5 Recreate comments
+        if (this.commentManager && Array.isArray(record.comments)) {
+            this.commentManager.loadComments(record.comments);
         }
 
         // 4. Restore noise settings if present

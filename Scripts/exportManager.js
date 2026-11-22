@@ -15,6 +15,7 @@ class ExportManager {
         this.windowConfig = windowConfig || window.WindowConfig;
         this.config = exportConfig || window.ExportConfig;
         this.onNoiseConfigLoaded = onNoiseConfigLoaded;
+        this.commentManager = null;
 
         this.window = null;
         this.activeTab = 'export'; // 'export' or 'import'
@@ -25,6 +26,10 @@ class ExportManager {
 
     setOnNoiseConfigLoaded(callback) {
         this.onNoiseConfigLoaded = callback;
+    }
+
+    setCommentManager(commentManager) {
+        this.commentManager = commentManager;
     }
 
     initWindow() {
@@ -446,6 +451,8 @@ class ExportManager {
             targetLength: (c.targetLength !== null && c.targetLength !== undefined && Number.isFinite(Number(c.targetLength))) ? Number(c.targetLength) : null
         }));
 
+        const comments = this.commentManager ? this.commentManager.serializeComments() : [];
+
         const noiseData = (includeNoise && this.noiseConfig) ? {
             noiseSize: this.noiseConfig.noiseSize,
             noiseSpeed: this.noiseConfig.noiseSpeed,
@@ -466,6 +473,7 @@ class ExportManager {
                 createdAt: Date.now(),
                 bubbles,
                 connections,
+                comments,
                 noiseConfig: noiseData
             }
         };
@@ -517,6 +525,7 @@ class ExportManager {
                 createdAt: record.createdAt || Date.now(),
                 bubbles: record.bubbles || [],
                 connections: record.connections || [],
+                comments: record.comments || [],
                 noiseConfig: record.noiseConfig || null
             }
         };
@@ -664,6 +673,7 @@ class ExportManager {
                 createdAt: b.createdAt || Date.now(),
                 bubbles: b.bubbles,
                 connections: Array.isArray(b.connections) ? b.connections : [],
+                comments: Array.isArray(b.comments) ? b.comments : [],
                 noiseConfig: b.noiseConfig || null
             };
         }
@@ -676,6 +686,7 @@ class ExportManager {
                 createdAt: data.createdAt || Date.now(),
                 bubbles: data.bubbles,
                 connections: Array.isArray(data.connections) ? data.connections : [],
+                comments: Array.isArray(data.comments) ? data.comments : [],
                 noiseConfig: data.noiseConfig || null
             };
         }
@@ -813,6 +824,11 @@ class ExportManager {
             });
         }
 
+        // 3.5 Recreate comments
+        if (this.commentManager && Array.isArray(data.comments)) {
+            this.commentManager.loadComments(data.comments);
+        }
+
         // 4. Restore noise parameters
         if (data.noiseConfig && this.noiseConfig) {
             Object.assign(this.noiseConfig, data.noiseConfig);
@@ -842,6 +858,7 @@ class ExportManager {
             createdAt: data.createdAt || Date.now(),
             bubbles: data.bubbles || [],
             connections: data.connections || [],
+            comments: data.comments || [],
             noiseConfig: data.noiseConfig || null
         };
 
@@ -869,6 +886,7 @@ class ExportManager {
                     createdAt: b.createdAt || Date.now(),
                     bubbles: b.bubbles,
                     connections: Array.isArray(b.connections) ? b.connections : [],
+                    comments: Array.isArray(b.comments) ? b.comments : [],
                     noiseConfig: b.noiseConfig || null
                 });
                 importedCount += 1;

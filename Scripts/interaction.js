@@ -7,10 +7,11 @@
  */
 
 class InteractionManager {
-    constructor(bubbleManager, contextMenu, connectionManager) {
+    constructor(bubbleManager, contextMenu, connectionManager, commentManager = null) {
         this.manager = bubbleManager;
         this.contextMenu = contextMenu;
         this.connectionManager = connectionManager || null;
+        this.commentManager = commentManager || null;
         this.noiseRenderer = null;
 
         // Single & Multi-Bubble Drag State
@@ -18,6 +19,14 @@ class InteractionManager {
         this.draggedBubbles = []; // Array of { bubble, offsetX, offsetY }
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
+
+        // Comment Drag State
+        this.draggedComment = null;
+        this.commentDragOffsetX = 0;
+        this.commentDragOffsetY = 0;
+        this.commentDragStartClientX = 0;
+        this.commentDragStartClientY = 0;
+        this.commentDragMoved = false;
 
         // Bubble Outline Hover & Resize State
         this.hoveredBubble = null;
@@ -456,6 +465,10 @@ class InteractionManager {
         this.connectionManager = connectionManager;
     }
 
+    setCommentManager(commentManager) {
+        this.commentManager = commentManager;
+    }
+
     setNoiseRenderer(renderer) {
         this.noiseRenderer = renderer;
         this.applyViewTransform();
@@ -530,7 +543,27 @@ class InteractionManager {
                 return;
             }
 
+            if (this.commentManager && this.commentManager.connectingState) {
+                this.commentManager.endConnectionDrag();
+                return;
+            }
+
             const boardCoords = this.getBoardCoords(e.clientX, e.clientY);
+
+            // 0. Check if right-clicked on a comment or comment connection line
+            const commentConnEl = e.target.closest('.comment-connection');
+            if (commentConnEl && this.commentManager) {
+                const commentId = Number(commentConnEl.dataset.commentId);
+                this.contextMenu.showCommentConnectionMenu(e.clientX, e.clientY, commentId);
+                return;
+            }
+
+            const commentEl = e.target.closest('.board-comment');
+            if (commentEl && this.commentManager) {
+                const commentId = Number(commentEl.dataset.id);
+                this.contextMenu.showCommentMenu(e.clientX, e.clientY, commentId);
+                return;
+            }
 
             // 1. Check if right-clicked on a connection line/label
             const connEl = e.target.closest('.universe-connection');
@@ -627,6 +660,56 @@ class InteractionManager {
                 // If clicked outside or on same bubble, cancel connecting mode
                 this.connectionManager.cancelConnecting();
                 return;
+            }
+
+            // Check if clicked on a comment's border connection dot (or hovered border) to drag a comment connection
+            if (this.commentManager) {
+                const dotEl = e.target.closest('.comment-connect-dot');
+                const borderMatch = this.commentManager.updateBorderHover(boardCoords.x, boardCoords.y);
+
+                if (dotEl) {
+                    const commentId = Number(dotEl.dataset.commentId);
+                    const comment = this.commentManager.getCommentById(commentId);
+                    if (comment) {
+                        const rect = this.commentManager.getCommentRect(comment);
+                        const startX = (borderMatch && borderMatch.comment.id === comment.id)
+                            ? borderMatch.edgeX
+                            : Math.max(rect.left, Math.min(rect.right, boardCoords.x));
+                        const startY = (borderMatch && borderMatch.comment.id === comment.id)
+                            ? borderMatch.edgeY
+                            : Math.max(rect.top, Math.min(rect.bottom, boardCoords.y));
+                        this.commentManager.startConnectionDrag(comment, startX, startY);
+                        this.contextMenu.close();
+                        return;
+                    }
+                } else if (borderMatch) {
+                    this.commentManager.startConnectionDrag(borderMatch.comment, borderMatch.edgeX, borderMatch.edgeY);
+                    this.contextMenu.close();
+                    return;
+                }
+
+                // Check if clicked on a comment rectangle body to drag it (or click link)
+                const commentEl = e.target.closest('.board-comment');
+                if (commentEl) {
+                    const commentId = Number(commentEl.dataset.id);
+                    const comment = this.commentManager.getCommentById(commentId);
+                    if (comment) {
+                        this.draggedComment = comment;
+                        this.commentDragOffsetX = comment.x - boardCoords.x;
+                        this.commentDragOffsetY = comment.y - boardCoords.y;
+                        this.commentDragStartClientX = e.clientX;
+                        this.commentDragStartClientY = e.clientY;
+                        this.commentDragMoved = false;
+                        comment.isDragging = true;
+                        if (comment.element) {
+                            comment.element.classList.add('is-dragging');
+                        }
+                        this.commentManager.clearBorderHover();
+                        document.body.classList.add('is-dragging-comment');
+                        this.contextMenu.close();
+                        return;
+                    }
+                }
             }
 
             // Check if clicked on a bubble's outline to resize it!
@@ -828,6 +911,35 @@ class InteractionManager {
                 return;
             }
 
+            // 2.5 Handle dragging a comment connection dot to attach to a bubble
+            if (this.commentManager && this.commentManager.connectingState) {
+                const targetBubble = this.commentManager.getBubbleAtPoint(boardCoords.x, boardCoords.y);
+                this.commentManager.updateConnectionPreview(boardCoords.x, boardCoords.y, targetBubble);
+                return;
+            }
+
+            // 2.6 Handle dragging a comment rectangle
+            if (this.draggedComment && this.commentManager) {
+                const c = this.draggedComment;
+                if (!this.commentDragMoved && Math.hypot(e.clientX - this.commentDragStartClientX, e.clientY - this.commentDragStartClientY) > 4) {
+                    this.commentDragMoved = true;
+                }
+                if (this.commentDragMoved) {
+                    c.x = boardCoords.x + this.commentDragOffsetX;
+                    c.y = boardCoords.y + this.commentDragOffsetY;
+                    if (c.attachedBubbleId !== null) {
+                        const attachedBubble = this.manager.getBubbleById(c.attachedBubbleId);
+                        if (attachedBubble) {
+                            c.offsetX = c.x - attachedBubble.x;
+                            c.offsetY = c.y - attachedBubble.y;
+                        }
+                    }
+                    this.commentManager.updateElementPosition(c);
+                    this.commentManager.renderConnections();
+                }
+                return;
+            }
+
             // 3. Handle background panning
             if (this.isPanning) {
                 const dx = e.clientX - this.panStartX;
@@ -884,8 +996,26 @@ class InteractionManager {
                         this.manager.onlineManager.onBubbleDrag(b);
                     }
                 }
+                if (this.commentManager) {
+                    this.commentManager.syncWithBubbles();
+                }
                 this.updateGroupSelectionFrame();
                 return;
+            }
+
+            // 5.5 Check if hovering a comment border (shows the connection dot on the hovered side)
+            if (this.commentManager) {
+                const borderHover = this.commentManager.updateBorderHover(boardCoords.x, boardCoords.y);
+                if (borderHover) {
+                    if (this.hoveredBubble && this.hoveredBubble.element) {
+                        this.hoveredBubble.element.classList.remove('is-bubble-hovered', 'is-outline-hovered');
+                        this.hoveredBubble.element.style.cursor = '';
+                    }
+                    this.hoveredBubble = null;
+                    this.hoveredOutlineBubble = null;
+                    document.body.style.cursor = 'crosshair';
+                    return;
+                }
             }
 
             // 6. Check if hovering a bubble or its outline ring
@@ -967,6 +1097,34 @@ class InteractionManager {
                 }
 
                 if (this.manager.savingManager && (!this.manager.onlineManager || !this.manager.onlineManager.isOnline)) {
+                    this.manager.savingManager.saveSessionSnapshot();
+                }
+            }
+
+            if (this.commentManager && this.commentManager.connectingState) {
+                const boardCoords = this.getBoardCoords(e.clientX, e.clientY);
+                const commentId = this.commentManager.connectingState.comment.id;
+                const targetBubble = this.commentManager.getBubbleAtPoint(boardCoords.x, boardCoords.y);
+                this.commentManager.endConnectionDrag();
+                if (targetBubble) {
+                    this.commentManager.attachCommentToBubble(commentId, targetBubble.id);
+                }
+            }
+
+            if (this.draggedComment) {
+                const comment = this.draggedComment;
+                const didMove = this.commentDragMoved;
+                comment.isDragging = false;
+                if (comment.element) {
+                    comment.element.classList.remove('is-dragging');
+                }
+                this.draggedComment = null;
+                this.commentDragMoved = false;
+                document.body.classList.remove('is-dragging-comment');
+
+                if (!didMove && comment.type === 'link' && comment.url && this.commentManager) {
+                    this.commentManager.openCommentLink(comment.id);
+                } else if (didMove && this.manager.savingManager && (!this.manager.onlineManager || !this.manager.onlineManager.isOnline)) {
                     this.manager.savingManager.saveSessionSnapshot();
                 }
             }
@@ -1053,6 +1211,10 @@ class InteractionManager {
                     }
                     return;
                 }
+                if (this.commentManager && this.commentManager.connectingState) {
+                    this.commentManager.endConnectionDrag();
+                    return;
+                }
                 if (this.connectionManager && this.connectionManager.pendingSourceId) {
                     this.connectionManager.cancelConnecting();
                 } else if (this.selectedBubbleIds.size > 0) {
@@ -1061,8 +1223,24 @@ class InteractionManager {
             }
         });
 
-        // Double click to quickly edit name (bubbles or connections)
+        // Double click to quickly edit name (bubbles, connections, or comments)
         window.addEventListener('dblclick', (e) => {
+            const commentEl = e.target.closest('.board-comment');
+            if (commentEl && this.commentManager) {
+                const commentId = Number(commentEl.dataset.id);
+                const comment = this.commentManager.getCommentById(commentId);
+                if (comment) {
+                    this.contextMenu.showCommentModal({
+                        mode: 'edit',
+                        comment,
+                        onSubmit: ({ type, text, url, color }) => {
+                            this.commentManager.updateComment(commentId, { type, text, url, color });
+                        }
+                    });
+                    return;
+                }
+            }
+
             const bubbleEl = e.target.closest('.universe-bubble');
             if (bubbleEl) {
                 const bubbleId = Number(bubbleEl.dataset.id);

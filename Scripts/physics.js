@@ -7,11 +7,12 @@
  */
 
 class BubblePhysics {
-    constructor(bubbleManager, config, connectionManager, connectionConfig) {
+    constructor(bubbleManager, config, connectionManager, connectionConfig, commentManager = null) {
         this.manager = bubbleManager;
         this.config = config;
         this.connectionManager = connectionManager || null;
         this.connectionConfig = connectionConfig || null;
+        this.commentManager = commentManager || null;
 
         this.animationFrameId = null;
         this.isRunning = false;
@@ -20,6 +21,10 @@ class BubblePhysics {
     setConnectionManager(connectionManager, connectionConfig) {
         this.connectionManager = connectionManager;
         this.connectionConfig = connectionConfig;
+    }
+
+    setCommentManager(commentManager) {
+        this.commentManager = commentManager;
     }
 
     start() {
@@ -242,6 +247,11 @@ class BubblePhysics {
 
             // Update DOM element visual transform
             this.manager.updateElementPosition(b);
+        }
+
+        // 4. Sync attached comments so they follow their bubbles (comments have no physics forces)
+        if (this.commentManager) {
+            this.commentManager.syncWithBubbles();
         }
     }
 }
