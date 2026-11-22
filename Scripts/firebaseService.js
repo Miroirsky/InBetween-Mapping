@@ -157,6 +157,71 @@ class FirebaseService {
     }
 
     /**
+     * Sanitizes a comment object so NaN or undefined values can never be written to Firebase.
+     */
+    sanitizeComment(c, fallbackId = null) {
+        if (!c || typeof c !== 'object') return null;
+        const rawId = (c.id !== undefined && c.id !== null && c.id !== '') ? Number(c.id) : Number(fallbackId);
+        const x = Number(c.x);
+        const y = Number(c.y);
+
+        if (!Number.isFinite(rawId) || rawId <= 0 || !Number.isFinite(x) || !Number.isFinite(y)) {
+            return null;
+        }
+
+        const id = Math.floor(rawId);
+        const type = c.type === 'link' ? 'link' : 'text';
+        const attachedRaw = c.attachedBubbleId !== undefined && c.attachedBubbleId !== null && c.attachedBubbleId !== ''
+            ? Number(c.attachedBubbleId)
+            : null;
+        const attachedBubbleId = (attachedRaw !== null && Number.isFinite(attachedRaw) && attachedRaw > 0)
+            ? Math.floor(attachedRaw)
+            : null;
+        const offsetX = Number.isFinite(Number(c.offsetX)) ? Math.round(Number(c.offsetX) * 100) / 100 : 0;
+        const offsetY = Number.isFinite(Number(c.offsetY)) ? Math.round(Number(c.offsetY) * 100) / 100 : 0;
+
+        return {
+            id,
+            type,
+            text: (typeof c.text === 'string') ? c.text.trim() : '',
+            url: (type === 'link' && typeof c.url === 'string') ? c.url.trim() : '',
+            color: (c.color && typeof c.color === 'string') ? c.color : '#f59e0b',
+            x: Math.round(x * 100) / 100,
+            y: Math.round(y * 100) / 100,
+            attachedBubbleId,
+            offsetX,
+            offsetY,
+            updatedBy: (c.updatedBy && typeof c.updatedBy === 'string') ? c.updatedBy : 'peer',
+            updatedAt: Number.isFinite(Number(c.updatedAt)) ? Number(c.updatedAt) : Date.now()
+        };
+    }
+
+    /**
+     * Sanitizes a comment-to-comment link object.
+     */
+    sanitizeCommentLink(l, fallbackId = null) {
+        if (!l || typeof l !== 'object') return null;
+        const rawId = (l.id !== undefined && l.id !== null && l.id !== '') ? Number(l.id) : Number(fallbackId);
+        const fromCommentId = Number(l.fromCommentId);
+        const toCommentId = Number(l.toCommentId);
+
+        if (
+            !Number.isFinite(rawId) || rawId <= 0 ||
+            !Number.isFinite(fromCommentId) || fromCommentId <= 0 ||
+            !Number.isFinite(toCommentId) || toCommentId <= 0 ||
+            fromCommentId === toCommentId
+        ) {
+            return null;
+        }
+
+        return {
+            id: Math.floor(rawId),
+            fromCommentId: Math.floor(fromCommentId),
+            toCommentId: Math.floor(toCommentId)
+        };
+    }
+
+    /**
      * Initializes Firebase App, Realtime Database, and Cloud Firestore.
      */
     async initialize() {
@@ -576,6 +641,110 @@ class FirebaseService {
     }
 
     /**
+     * Writes or updates a sanitized comment in Realtime Database.
+     */
+    async updateComment(roomId, commentId, commentData) {
+        const clean = this.sanitizeComment(commentData, commentId);
+        if (!clean) return;
+
+        if (this.isSimulated || !this.db) {
+            this.updateSimStorageComment(roomId, clean.id, clean);
+            this.broadcastSimEvent('comment_update', { roomId, commentId: clean.id, commentData: clean });
+            return;
+        }
+
+        const commentsPath = (this.config.realtimeDb && this.config.realtimeDb.commentsPath) || 'board/comments';
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${commentsPath}/${clean.id}`);
+        await ref.set(clean);
+    }
+
+    /**
+     * Batch updates multiple comments in Realtime Database atomically.
+     */
+    async batchUpdateComments(roomId, commentsList) {
+        if (!Array.isArray(commentsList) || commentsList.length === 0) return;
+
+        const updates = {};
+        const cleanList = [];
+
+        for (const c of commentsList) {
+            const clean = this.sanitizeComment(c, c && c.id);
+            if (clean) {
+                updates[clean.id] = clean;
+                cleanList.push(clean);
+            }
+        }
+
+        if (cleanList.length === 0) return;
+
+        if (this.isSimulated || !this.db) {
+            for (const clean of cleanList) {
+                this.updateSimStorageComment(roomId, clean.id, clean);
+                this.broadcastSimEvent('comment_update', { roomId, commentId: clean.id, commentData: clean });
+            }
+            return;
+        }
+
+        const commentsPath = (this.config.realtimeDb && this.config.realtimeDb.commentsPath) || 'board/comments';
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${commentsPath}`);
+        await ref.update(updates);
+    }
+
+    /**
+     * Removes a comment from Realtime Database.
+     */
+    async removeComment(roomId, commentId) {
+        if (commentId === undefined || commentId === null || commentId === '') return;
+        const key = String(commentId);
+
+        if (this.isSimulated || !this.db) {
+            this.removeSimStorageComment(roomId, key);
+            this.broadcastSimEvent('comment_remove', { roomId, commentId: key });
+            return;
+        }
+
+        const commentsPath = (this.config.realtimeDb && this.config.realtimeDb.commentsPath) || 'board/comments';
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${commentsPath}/${key}`);
+        await ref.remove();
+    }
+
+    /**
+     * Writes or updates a comment-to-comment link in Realtime Database.
+     */
+    async updateCommentLink(roomId, linkId, linkData) {
+        const clean = this.sanitizeCommentLink(linkData, linkId);
+        if (!clean) return;
+
+        if (this.isSimulated || !this.db) {
+            this.updateSimStorageCommentLink(roomId, clean.id, clean);
+            this.broadcastSimEvent('comment_link_update', { roomId, linkId: clean.id, linkData: clean });
+            return;
+        }
+
+        const linksPath = (this.config.realtimeDb && this.config.realtimeDb.commentLinksPath) || 'board/commentLinks';
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${linksPath}/${clean.id}`);
+        await ref.set(clean);
+    }
+
+    /**
+     * Removes a comment-to-comment link from Realtime Database.
+     */
+    async removeCommentLink(roomId, linkId) {
+        if (linkId === undefined || linkId === null || linkId === '') return;
+        const key = String(linkId);
+
+        if (this.isSimulated || !this.db) {
+            this.removeSimStorageCommentLink(roomId, key);
+            this.broadcastSimEvent('comment_link_remove', { roomId, linkId: key });
+            return;
+        }
+
+        const linksPath = (this.config.realtimeDb && this.config.realtimeDb.commentLinksPath) || 'board/commentLinks';
+        const ref = this.db.ref(`${this.config.realtimeDb.roomsPath}/${roomId}/${linksPath}/${key}`);
+        await ref.remove();
+    }
+
+    /**
      * Completely sets the full board state in Realtime Database.
      */
     async setBoard(roomId, boardData, user = null) {
@@ -603,11 +772,37 @@ class FirebaseService {
             }
         });
 
+        const commentsMap = {};
+        const rawComments = boardData && boardData.comments
+            ? (Array.isArray(boardData.comments) ? boardData.comments : Object.values(boardData.comments))
+            : [];
+
+        rawComments.forEach(c => {
+            const clean = this.sanitizeComment(c, c && c.id);
+            if (clean) {
+                commentsMap[clean.id] = clean;
+            }
+        });
+
+        const commentLinksMap = {};
+        const rawCommentLinks = boardData && boardData.commentLinks
+            ? (Array.isArray(boardData.commentLinks) ? boardData.commentLinks : Object.values(boardData.commentLinks))
+            : [];
+
+        rawCommentLinks.forEach(l => {
+            const clean = this.sanitizeCommentLink(l, l && l.id);
+            if (clean && commentsMap[clean.fromCommentId] && commentsMap[clean.toCommentId]) {
+                commentLinksMap[clean.id] = clean;
+            }
+        });
+
         const payload = {
             bubbles: bubblesMap,
             connections: connectionsMap,
+            comments: commentsMap,
+            commentLinks: commentLinksMap,
             noiseConfig: (boardData && (boardData.noiseConfig || boardData.noiseData)) || null,
-            isCleared: Object.keys(bubblesMap).length === 0,
+            isCleared: Object.keys(bubblesMap).length === 0 && Object.keys(commentsMap).length === 0,
             updatedAt: this.db ? window.firebase.database.ServerValue.TIMESTAMP : Date.now(),
             updatedBy: user ? user.name : 'System'
         };
@@ -629,6 +824,8 @@ class FirebaseService {
         const payload = {
             bubbles: null,
             connections: null,
+            comments: null,
+            commentLinks: null,
             isCleared: true,
             updatedAt: this.db ? window.firebase.database.ServerValue.TIMESTAMP : Date.now(),
             updatedBy: user ? user.name : 'System'
@@ -638,6 +835,8 @@ class FirebaseService {
             localStorage.setItem(`inbetween_sim_board_${roomId}`, JSON.stringify({
                 bubbles: {},
                 connections: {},
+                comments: {},
+                commentLinks: {},
                 isCleared: true,
                 updatedAt: Date.now()
             }));
@@ -690,6 +889,22 @@ class FirebaseService {
             });
         }
 
+        const cleanComments = [];
+        if (boardData && Array.isArray(boardData.comments)) {
+            boardData.comments.forEach(c => {
+                const clean = this.sanitizeComment(c, c && c.id);
+                if (clean) cleanComments.push(clean);
+            });
+        }
+
+        const cleanCommentLinks = [];
+        if (boardData && Array.isArray(boardData.commentLinks)) {
+            boardData.commentLinks.forEach(l => {
+                const clean = this.sanitizeCommentLink(l, l && l.id);
+                if (clean) cleanCommentLinks.push(clean);
+            });
+        }
+
         const payload = {
             roomId: roomId,
             roomName: (this.config && this.config.roomName) || 'Global Room',
@@ -702,9 +917,12 @@ class FirebaseService {
             updatedAt: (window.firebase && window.firebase.firestore) ? window.firebase.firestore.FieldValue.serverTimestamp() : new Date().toISOString(),
             bubbleCount: cleanBubbles.length,
             connectionCount: cleanConnections.length,
+            commentCount: cleanComments.length,
             board: {
                 bubbles: cleanBubbles,
                 connections: cleanConnections,
+                comments: cleanComments,
+                commentLinks: cleanCommentLinks,
                 noiseConfig: (boardData && (boardData.noiseConfig || boardData.noiseData)) ? (boardData.noiseConfig || boardData.noiseData) : null
             }
         };
@@ -826,6 +1044,51 @@ class FirebaseService {
         } catch (e) {}
     }
 
+    updateSimStorageComment(roomId, id, cleanComment) {
+        try {
+            const key = `inbetween_sim_board_${roomId}`;
+            const raw = localStorage.getItem(key);
+            const board = raw ? JSON.parse(raw) : { bubbles: {}, connections: {}, comments: {}, commentLinks: {} };
+            if (!board.comments) board.comments = {};
+            board.comments[id] = cleanComment;
+            board.isCleared = false;
+            localStorage.setItem(key, JSON.stringify(board));
+        } catch (e) {}
+    }
+
+    removeSimStorageComment(roomId, id) {
+        try {
+            const key = `inbetween_sim_board_${roomId}`;
+            const raw = localStorage.getItem(key);
+            if (!raw) return;
+            const board = JSON.parse(raw);
+            if (board.comments) delete board.comments[id];
+            localStorage.setItem(key, JSON.stringify(board));
+        } catch (e) {}
+    }
+
+    updateSimStorageCommentLink(roomId, id, cleanLink) {
+        try {
+            const key = `inbetween_sim_board_${roomId}`;
+            const raw = localStorage.getItem(key);
+            const board = raw ? JSON.parse(raw) : { bubbles: {}, connections: {}, comments: {}, commentLinks: {} };
+            if (!board.commentLinks) board.commentLinks = {};
+            board.commentLinks[id] = cleanLink;
+            localStorage.setItem(key, JSON.stringify(board));
+        } catch (e) {}
+    }
+
+    removeSimStorageCommentLink(roomId, id) {
+        try {
+            const key = `inbetween_sim_board_${roomId}`;
+            const raw = localStorage.getItem(key);
+            if (!raw) return;
+            const board = JSON.parse(raw);
+            if (board.commentLinks) delete board.commentLinks[id];
+            localStorage.setItem(key, JSON.stringify(board));
+        } catch (e) {}
+    }
+
     setupSimulatedPresence(roomId, user, onPresenceUpdate) {
         const presKey = `inbetween_sim_presence_${roomId}`;
         const registerPresence = () => {
@@ -893,7 +1156,7 @@ class FirebaseService {
             if (type === 'board_set' && typeof callbacks.onBoardValue === 'function') {
                 callbacks.onBoardValue(payload.payload);
             } else if (type === 'board_clear' && typeof callbacks.onBoardValue === 'function') {
-                callbacks.onBoardValue({ bubbles: {}, connections: {}, isCleared: true });
+                callbacks.onBoardValue({ bubbles: {}, connections: {}, comments: {}, commentLinks: {}, isCleared: true });
             } else if (type === 'bubble_position' && typeof callbacks.onBubblePosition === 'function') {
                 callbacks.onBubblePosition(payload.bubbleId, payload.x, payload.y, payload.bubbleData);
             } else if (type === 'bubble_update' && typeof callbacks.onBubbleUpdate === 'function') {
@@ -904,6 +1167,14 @@ class FirebaseService {
                 callbacks.onConnUpdate(payload.connId, payload.connData);
             } else if (type === 'conn_remove' && typeof callbacks.onConnRemove === 'function') {
                 callbacks.onConnRemove(payload.connId);
+            } else if (type === 'comment_update' && typeof callbacks.onCommentUpdate === 'function') {
+                callbacks.onCommentUpdate(payload.commentId, payload.commentData);
+            } else if (type === 'comment_remove' && typeof callbacks.onCommentRemove === 'function') {
+                callbacks.onCommentRemove(payload.commentId);
+            } else if (type === 'comment_link_update' && typeof callbacks.onCommentLinkUpdate === 'function') {
+                callbacks.onCommentLinkUpdate(payload.linkId, payload.linkData);
+            } else if (type === 'comment_link_remove' && typeof callbacks.onCommentLinkRemove === 'function') {
+                callbacks.onCommentLinkRemove(payload.linkId);
             }
         };
     }

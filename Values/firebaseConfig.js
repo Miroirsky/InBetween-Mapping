@@ -54,6 +54,8 @@ const FirebaseConfig = {
         boardPath: 'board',
         bubblesPath: 'board/bubbles',
         connectionsPath: 'board/connections',
+        commentsPath: 'board/comments',
+        commentLinksPath: 'board/commentLinks',
         presencePath: 'presence'
     },
 

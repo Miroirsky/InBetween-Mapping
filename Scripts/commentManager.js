@@ -14,6 +14,7 @@ class CommentManager {
         this.bubbleManager = bubbleManager;
         this.config = config || window.CommentConfig || {};
         this.savingManager = null;
+        this.onlineManager = null;
 
         this.comments = [];
         this.nextId = 1;
@@ -29,6 +30,10 @@ class CommentManager {
 
     setSavingManager(savingManager) {
         this.savingManager = savingManager;
+    }
+
+    setOnlineManager(onlineManager) {
+        this.onlineManager = onlineManager;
     }
 
     initSVG() {
@@ -214,6 +219,10 @@ class CommentManager {
         this.syncNextId();
         this.renderConnections();
 
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentCreated(comment);
+        }
+
         if (saveSnapshot && this.savingManager) {
             this.savingManager.saveSessionSnapshot();
         }
@@ -317,6 +326,10 @@ class CommentManager {
         this.applyCommentStyle(comment);
         this.renderConnections();
 
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentUpdated(comment);
+        }
+
         if (this.savingManager) {
             this.savingManager.saveSessionSnapshot();
         }
@@ -332,6 +345,9 @@ class CommentManager {
         comment.color = newColor;
         this.applyCommentStyle(comment);
         this.renderConnections();
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentUpdated(comment);
+        }
         if (this.savingManager) {
             this.savingManager.saveSessionSnapshot();
         }
@@ -370,7 +386,15 @@ class CommentManager {
             this.endConnectionDrag();
         }
 
-        if (comment.element) {
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentRemoved(targetId);
+        }
+
+        if (this.onlineManager && this.onlineManager.isApplyingRemote) {
+            if (comment.element && comment.element.parentNode) {
+                comment.element.parentNode.removeChild(comment.element);
+            }
+        } else if (comment.element) {
             comment.element.classList.add('comment-destroying');
             setTimeout(() => {
                 if (comment.element && comment.element.parentNode) {
@@ -463,6 +487,10 @@ class CommentManager {
 
         this.renderConnections();
 
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentUpdated(comment);
+        }
+
         if (this.savingManager) {
             this.savingManager.saveSessionSnapshot();
         }
@@ -486,6 +514,10 @@ class CommentManager {
 
         this.renderConnections();
 
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentUpdated(comment);
+        }
+
         if (this.savingManager) {
             this.savingManager.saveSessionSnapshot();
         }
@@ -505,6 +537,9 @@ class CommentManager {
                 comment.offsetY = 0;
                 if (comment.element) {
                     comment.element.classList.remove('is-attached');
+                }
+                if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+                    this.onlineManager.onCommentUpdated(comment);
                 }
                 changed = true;
             }
@@ -547,6 +582,10 @@ class CommentManager {
         this.syncNextLinkId();
         this.renderConnections();
 
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentLinkCreated(link);
+        }
+
         if (saveSnapshot && this.savingManager) {
             this.savingManager.saveSessionSnapshot();
         }
@@ -588,6 +627,10 @@ class CommentManager {
         this.syncNextLinkId();
         this.renderConnections();
 
+        if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+            this.onlineManager.onCommentLinkRemoved(targetId);
+        }
+
         if (saveSnapshot && this.savingManager) {
             this.savingManager.saveSessionSnapshot();
         }
@@ -599,11 +642,14 @@ class CommentManager {
      */
     removeCommentLinksForComment(commentId, saveSnapshot = true) {
         const targetId = Number(commentId);
-        const before = this.commentLinks.length;
-        this.commentLinks = this.commentLinks.filter(l => l.fromCommentId !== targetId && l.toCommentId !== targetId);
-        if (this.commentLinks.length !== before) {
+        const toRemove = this.commentLinks.filter(l => l.fromCommentId === targetId || l.toCommentId === targetId);
+        if (toRemove.length > 0) {
+            this.commentLinks = this.commentLinks.filter(l => l.fromCommentId !== targetId && l.toCommentId !== targetId);
             this.syncNextLinkId();
             this.renderConnections();
+            if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
+                toRemove.forEach(l => this.onlineManager.onCommentLinkRemoved(l.id));
+            }
             if (saveSnapshot && this.savingManager) {
                 this.savingManager.saveSessionSnapshot();
             }
@@ -614,16 +660,16 @@ class CommentManager {
 
     /**
      * Moves all comments attached to `parentCommentId` (and recursively any comments attached to them)
-     * by (dx, dy), using a visited set to avoid cycles.
+     * by (dx, dy), using a visited set to avoid cycles. Returns array of moved child comments.
      */
     moveAttachedCommentChildren(parentCommentId, dx, dy) {
-        if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001) return false;
-        if (this.commentLinks.length === 0) return false;
+        const moved = [];
+        if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001) return moved;
+        if (this.commentLinks.length === 0) return moved;
 
         const rootId = Number(parentCommentId);
         const visited = new Set([rootId]);
         const queue = [rootId];
-        let movedAny = false;
 
         while (queue.length > 0) {
             const currentId = queue.shift();
@@ -649,12 +695,12 @@ class CommentManager {
                 }
 
                 this.updateElementPosition(child);
-                movedAny = true;
+                moved.push(child);
                 queue.push(childId);
             }
         }
 
-        return movedAny;
+        return moved;
     }
 
     /**

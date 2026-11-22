@@ -157,6 +157,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (connectionManager) {
             connectionManager.setOnlineManager(onlineManager);
         }
+        if (commentManager) {
+            commentManager.setOnlineManager(onlineManager);
+            onlineManager.setCommentManager(commentManager);
+        }
 
         if (viewMenu) {
             viewMenu.setOnlineManager(onlineManager);
