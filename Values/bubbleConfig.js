@@ -23,7 +23,7 @@ const BubbleConfig = {
      * 20 = snaps to 20% increments of the default bubble size (20%, 40%, 60%, 80%, 100%, 120%, ...).
      */
     sizeSnapPercent: 25,
-    minScale: 0.2,
+    minScale: 0.4,
     maxScale: 4.0,
 
     /**
