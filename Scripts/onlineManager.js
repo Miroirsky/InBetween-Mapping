@@ -623,8 +623,25 @@ class OnlineManager {
                         if (localConn.name !== rc.name) {
                             this.connectionManager.renameConnection(id, rc.name);
                         }
-                        if (rc.targetLength !== undefined && localConn.targetLength !== rc.targetLength) {
-                            this.connectionManager.setConnectionTargetLength(id, rc.targetLength, false);
+
+                        const resizingId = this.connectionManager.resizingConnectionId;
+                        let isBeingResizedLocally = false;
+                        if (resizingId !== null && resizingId !== undefined) {
+                            if (Number(localConn.id) === Number(resizingId)) {
+                                isBeingResizedLocally = true;
+                            } else {
+                                const resizingConn = this.connectionManager.getConnectionById(resizingId);
+                                if (resizingConn && Number(resizingConn.fromId) === Number(localConn.toId) && Number(resizingConn.toId) === Number(localConn.fromId)) {
+                                    isBeingResizedLocally = true;
+                                }
+                            }
+                        }
+                        const recentlyEditedLocally = (now - (localConn._lastLocalEditAt || 0) < 500);
+                        const remoteTargetLength = (rc.targetLength !== undefined && rc.targetLength !== null) ? rc.targetLength : null;
+                        const localTargetLength = (localConn.targetLength !== undefined && localConn.targetLength !== null) ? localConn.targetLength : null;
+
+                        if (!isBeingResizedLocally && !recentlyEditedLocally && localTargetLength !== remoteTargetLength) {
+                            this.connectionManager.setConnectionTargetLength(id, remoteTargetLength, false);
                         }
                     } else {
                         if (this.bubbleManager.getBubbleById(rc.fromId) && this.bubbleManager.getBubbleById(rc.toId)) {
@@ -755,8 +772,10 @@ class OnlineManager {
                 if (data.name !== undefined && local.name !== data.name) {
                     this.connectionManager.renameConnection(id, data.name);
                 }
-                if (data.targetLength !== undefined && local.targetLength !== data.targetLength) {
-                    this.connectionManager.setConnectionTargetLength(id, data.targetLength, false);
+                const remoteTargetLength = (data.targetLength !== undefined && data.targetLength !== null) ? data.targetLength : null;
+                const localTargetLength = (local.targetLength !== undefined && local.targetLength !== null) ? local.targetLength : null;
+                if (localTargetLength !== remoteTargetLength) {
+                    this.connectionManager.setConnectionTargetLength(id, remoteTargetLength, false);
                 }
             } else if (data.fromId && data.toId) {
                 this.connectionManager.createConnection(data.fromId, data.toId, data.name, id, data.targetLength || null);
@@ -925,11 +944,13 @@ class OnlineManager {
     onConnectionCreated(conn) {
         if (!this.isOnline || this.isApplyingRemote || !conn) return;
         this.lastLocalActionAt = Date.now();
+        conn._lastLocalEditAt = this.lastLocalActionAt;
         this.firebaseService.updateConnection(this.roomId, conn.id, {
             id: conn.id,
             fromId: conn.fromId,
             toId: conn.toId,
-            name: conn.name
+            name: conn.name,
+            targetLength: conn.targetLength ?? null
         });
         this.renderRoomDetails();
     }
@@ -937,11 +958,13 @@ class OnlineManager {
     onConnectionRenamed(conn) {
         if (!this.isOnline || this.isApplyingRemote || !conn) return;
         this.lastLocalActionAt = Date.now();
+        conn._lastLocalEditAt = this.lastLocalActionAt;
         this.firebaseService.updateConnection(this.roomId, conn.id, {
             id: conn.id,
             fromId: conn.fromId,
             toId: conn.toId,
-            name: conn.name
+            name: conn.name,
+            targetLength: conn.targetLength ?? null
         });
     }
 

@@ -928,8 +928,8 @@ class InteractionManager {
                     this.connectionManager.endArrowScalePreview();
                     if (connId) {
                         const conn = this.connectionManager.getConnectionById(connId);
-                        if (conn && this.manager.onlineManager && this.manager.onlineManager.isOnline) {
-                            this.manager.onlineManager.onConnectionRenamed(conn);
+                        if (conn) {
+                            this.connectionManager.setConnectionTargetLength(connId, conn.targetLength, true);
                         }
                     }
                 }

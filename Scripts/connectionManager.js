@@ -14,6 +14,7 @@ class ConnectionManager {
         this.connections = []; // [{ id, fromId, toId, name }]
         this.nextId = 1;
         this.hoveredConnectionId = null;
+        this.resizingConnectionId = null;
         this.onlineManager = null;
         this.connectionViewEnabled = false;
 
@@ -111,16 +112,27 @@ class ConnectionManager {
 
         conn.targetLength = val;
 
+        const isLocalEdit = !this.onlineManager || !this.onlineManager.isApplyingRemote;
+        if (isLocalEdit) {
+            conn._lastLocalEditAt = Date.now();
+        }
+
         // Keep bidirectional pair in sync
         const rev = this.connections.find(c => Number(c.fromId) === Number(conn.toId) && Number(c.toId) === Number(conn.fromId));
         if (rev) {
             rev.targetLength = val;
+            if (isLocalEdit) {
+                rev._lastLocalEditAt = Date.now();
+            }
         }
 
         this.render();
 
         if (syncOnline && this.onlineManager && this.onlineManager.isOnline) {
             this.onlineManager.onConnectionRenamed(conn);
+            if (rev) {
+                this.onlineManager.onConnectionRenamed(rev);
+            }
         }
 
         return true;
@@ -298,9 +310,17 @@ class ConnectionManager {
     /**
      * Resets all custom connection target lengths back to default base length.
      */
-    resetAllConnectionLengths() {
+    resetAllConnectionLengths(syncOnline = true) {
+        const isLocalEdit = !this.onlineManager || !this.onlineManager.isApplyingRemote;
+        const now = Date.now();
         for (const conn of this.connections) {
-            delete conn.targetLength;
+            conn.targetLength = null;
+            if (isLocalEdit) {
+                conn._lastLocalEditAt = now;
+            }
+            if (syncOnline && this.onlineManager && this.onlineManager.isOnline) {
+                this.onlineManager.onConnectionRenamed(conn);
+            }
         }
         this.render();
     }
@@ -644,6 +664,7 @@ class ConnectionManager {
      * Initializes the scaling circle preview when dragging an arrow to adjust its length.
      */
     startArrowScalePreview(connId, centerX, centerY) {
+        this.resizingConnectionId = Number.isFinite(Number(connId)) ? Number(connId) : null;
         if (!this.arrowScaleOverlay) return;
         this.arrowScaleOverlay.style.display = 'block';
     }
@@ -704,6 +725,7 @@ class ConnectionManager {
      * Hides and cleans up the scaling circle overlay.
      */
     endArrowScalePreview() {
+        this.resizingConnectionId = null;
         if (!this.arrowScaleOverlay) return;
         this.arrowScaleOverlay.style.display = 'none';
         this.arrowScaleOverlay.innerHTML = '';
