@@ -43,18 +43,13 @@ class ConnectionManager {
      * - 2.0x twice as long -> Red (rgb(255, 42, 42)), smoothly interpolated (e.g. 1.5x is halfway white-red)
      * - 0.5x twice as short -> Blue (rgb(42, 130, 255)), smoothly interpolated
      */
-    getConnectionLengthColor(dist, fromRadius, toRadius) {
+    getConnectionLengthColor(dist, fromRadius, toRadius, conn = null) {
         if (!this.connectionViewEnabled) {
             return (this.config && this.config.arrowColor) || '#000000';
         }
 
-        const diameter = (this.bubbleManager && this.bubbleManager.currentDiameter) || 100;
-        const gapMultiplier = (this.bubbleManager && this.bubbleManager.config && this.bubbleManager.config.bubbleGapMultiplier !== undefined)
-            ? this.bubbleManager.config.bubbleGapMultiplier
-            : 2.0;
-
-        // Normal visible connection length at physics rest equilibrium
-        const normalLength = Math.max(1, diameter * gapMultiplier);
+        // Visible connection length at rest equilibrium for this arrow
+        const normalLength = Math.max(1, this.getConnectionTargetLength(conn));
         const currentLength = Math.max(0, dist - (fromRadius + toRadius));
         const ratio = currentLength / normalLength;
 
@@ -75,6 +70,241 @@ class ConnectionManager {
         }
     }
 
+    /**
+     * Base rest arrow length between universes (default diameter * gapMultiplier).
+     */
+    getBaseArrowLength() {
+        const diameter = (this.bubbleManager && this.bubbleManager.currentDiameter) || 100;
+        const gapMultiplier = (this.bubbleManager && this.bubbleManager.config && this.bubbleManager.config.bubbleGapMultiplier !== undefined)
+            ? this.bubbleManager.config.bubbleGapMultiplier
+            : 2.0;
+        return Math.max(10, diameter * gapMultiplier);
+    }
+
+    /**
+     * Retrieves the custom target length for an arrow / connection, or falls back to base arrow length.
+     */
+    getConnectionTargetLength(conn) {
+        if (conn && Number.isFinite(Number(conn.targetLength)) && Number(conn.targetLength) > 0) {
+            return Number(conn.targetLength);
+        }
+        // If reverse connection exists in a pair, use its custom length if set
+        if (conn) {
+            const rev = this.connections.find(c => Number(c.fromId) === Number(conn.toId) && Number(c.toId) === Number(conn.fromId));
+            if (rev && Number.isFinite(Number(rev.targetLength)) && Number(rev.targetLength) > 0) {
+                return Number(rev.targetLength);
+            }
+        }
+        return this.getBaseArrowLength();
+    }
+
+    /**
+     * Sets custom target length for a connection (and its reverse if present), re-rendering and syncing.
+     */
+    setConnectionTargetLength(id, targetLength, syncOnline = true) {
+        const conn = this.getConnectionById(id);
+        if (!conn) return false;
+
+        const val = (targetLength !== null && Number.isFinite(Number(targetLength)) && Number(targetLength) > 0)
+            ? Math.round(Number(targetLength) * 10) / 10
+            : null;
+
+        conn.targetLength = val;
+
+        // Keep bidirectional pair in sync
+        const rev = this.connections.find(c => Number(c.fromId) === Number(conn.toId) && Number(c.toId) === Number(conn.fromId));
+        if (rev) {
+            rev.targetLength = val;
+        }
+
+        this.render();
+
+        if (syncOnline && this.onlineManager && this.onlineManager.isOnline) {
+            this.onlineManager.onConnectionRenamed(conn);
+        }
+
+        return true;
+    }
+
+    /**
+     * Calculates the geometric center point (x, y) of a connection's visible arrow.
+     */
+    getConnectionCenter(connOrId) {
+        const conn = (typeof connOrId === 'object' && connOrId !== null)
+            ? connOrId
+            : this.getConnectionById(connOrId);
+        if (!conn) return null;
+
+        const fromBubble = this.bubbleManager.getBubbleById(conn.fromId);
+        const toBubble = this.bubbleManager.getBubbleById(conn.toId);
+        if (!fromBubble || !toBubble) return null;
+
+        const fromRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
+            ? this.bubbleManager.getBubbleRadius(fromBubble)
+            : this.bubbleManager.currentRadius;
+        const toRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
+            ? this.bubbleManager.getBubbleRadius(toBubble)
+            : this.bubbleManager.currentRadius;
+
+        const dx = toBubble.x - fromBubble.x;
+        const dy = toBubble.y - fromBubble.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1) return { x: fromBubble.x, y: fromBubble.y };
+
+        const angle = Math.atan2(dy, dx);
+        const hasReverse = this.hasConnection(conn.toId, conn.fromId);
+
+        if (hasReverse) {
+            const curveOffset = this.config.bidirectionalCurveOffset;
+            const normalX = -Math.sin(angle);
+            const normalY = Math.cos(angle);
+            const startShiftAngle = angle + 0.2;
+            const endShiftAngle = angle - 0.2;
+
+            const startX = fromBubble.x + fromRadius * Math.cos(startShiftAngle);
+            const startY = fromBubble.y + fromRadius * Math.sin(startShiftAngle);
+            const arrowTipX = toBubble.x - toRadius * Math.cos(endShiftAngle);
+            const arrowTipY = toBubble.y - toRadius * Math.sin(endShiftAngle);
+
+            const rawMidX = (fromBubble.x + toBubble.x) * 0.5;
+            const rawMidY = (fromBubble.y + toBubble.y) * 0.5;
+            const ctrlX = rawMidX + normalX * curveOffset;
+            const ctrlY = rawMidY + normalY * curveOffset;
+
+            return {
+                x: 0.25 * startX + 0.5 * ctrlX + 0.25 * arrowTipX,
+                y: 0.25 * startY + 0.5 * ctrlY + 0.25 * arrowTipY
+            };
+        } else {
+            const startX = fromBubble.x + fromRadius * Math.cos(angle);
+            const startY = fromBubble.y + fromRadius * Math.sin(angle);
+            const arrowTipX = toBubble.x - toRadius * Math.cos(angle);
+            const arrowTipY = toBubble.y - toRadius * Math.sin(angle);
+
+            return {
+                x: (startX + arrowTipX) * 0.5,
+                y: (startY + arrowTipY) * 0.5
+            };
+        }
+    }
+
+    /**
+     * Sets the connection target length to match the current distance between the two bubbles,
+     * placing the connection in perfect equilibrium (ratio 1.0, pure white in Connection View).
+     */
+    setConnectionToOptimalLength(connId, syncOnline = true) {
+        const conn = this.getConnectionById(connId);
+        if (!conn) return null;
+
+        const fromBubble = this.bubbleManager.getBubbleById(conn.fromId);
+        const toBubble = this.bubbleManager.getBubbleById(conn.toId);
+        if (!fromBubble || !toBubble) return null;
+
+        const fromRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
+            ? this.bubbleManager.getBubbleRadius(fromBubble)
+            : this.bubbleManager.currentRadius;
+        const toRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
+            ? this.bubbleManager.getBubbleRadius(toBubble)
+            : this.bubbleManager.currentRadius;
+
+        const dx = toBubble.x - fromBubble.x;
+        const dy = toBubble.y - fromBubble.y;
+        const dist = Math.hypot(dx, dy);
+
+        // Optimal length is current edge-to-edge distance between the bubbles
+        const optimalLength = Math.max(10, Math.round((dist - (fromRadius + toRadius)) * 10) / 10);
+
+        this.setConnectionTargetLength(connId, optimalLength, syncOnline);
+        return optimalLength;
+    }
+
+    /**
+     * Gets all connections belonging to a set of bubble IDs.
+     * If internalOnly is true, both fromId and toId must be in the set.
+     * If false, either fromId or toId must be in the set.
+     */
+    getConnectionsForBubbleIds(bubbleIds, internalOnly = true) {
+        if (!bubbleIds) return [];
+        const idSet = bubbleIds instanceof Set ? bubbleIds : new Set(Array.from(bubbleIds).map(Number));
+        if (idSet.size === 0) return [];
+
+        if (internalOnly) {
+            return this.connections.filter(c => idSet.has(Number(c.fromId)) && idSet.has(Number(c.toId)));
+        } else {
+            return this.connections.filter(c => idSet.has(Number(c.fromId)) || idSet.has(Number(c.toId)));
+        }
+    }
+
+    /**
+     * Sets multiple connections to their optimal equilibrium length at once.
+     * @param {Array<number|Object>} conns - Connection IDs or connection objects.
+     * @param {boolean} syncOnline - Whether to sync updates to multiplayer room.
+     * @returns {number} The number of connections updated.
+     */
+    setMultipleConnectionsToOptimalLength(conns, syncOnline = true) {
+        if (!Array.isArray(conns) || conns.length === 0) return 0;
+        let count = 0;
+        const processedIds = new Set();
+
+        for (const item of conns) {
+            const id = (typeof item === 'object' && item !== null) ? Number(item.id) : Number(item);
+            if (!Number.isFinite(id) || processedIds.has(id)) continue;
+
+            const conn = this.getConnectionById(id);
+            if (!conn) continue;
+
+            processedIds.add(id);
+            // Also mark reverse connection as processed to avoid redundant calculations
+            const rev = this.connections.find(c => Number(c.fromId) === Number(conn.toId) && Number(c.toId) === Number(conn.fromId));
+            if (rev) processedIds.add(Number(rev.id));
+
+            const updated = this.setConnectionToOptimalLength(id, syncOnline);
+            if (updated !== null) {
+                count++;
+            }
+        }
+
+        this.render();
+        return count;
+    }
+
+    /**
+     * Sets all connections within the given selection of bubble IDs to their perfect equilibrium length.
+     * Checks internal connections first (both bubbles selected); falls back to incident connections if no internal connections exist.
+     * @param {Array<number>|Set<number>} bubbleIds - Set or array of selected bubble IDs.
+     * @param {boolean} syncOnline - Whether to sync updates to multiplayer room.
+     * @returns {number} The number of connections updated.
+     */
+    setSelectionConnectionsToOptimalLength(bubbleIds, syncOnline = true) {
+        if (!bubbleIds) return 0;
+        const idSet = bubbleIds instanceof Set ? bubbleIds : new Set(Array.from(bubbleIds).map(Number));
+        if (idSet.size === 0) return 0;
+
+        let targetConns = this.getConnectionsForBubbleIds(idSet, true);
+        if (targetConns.length === 0) {
+            targetConns = this.getConnectionsForBubbleIds(idSet, false);
+        }
+
+        return this.setMultipleConnectionsToOptimalLength(targetConns, syncOnline);
+    }
+
+    /**
+     * Sets ALL connections on the board to their perfect equilibrium length.
+     */
+    setAllConnectionsToOptimalLength(syncOnline = true) {
+        return this.setMultipleConnectionsToOptimalLength(this.connections, syncOnline);
+    }
+
+    /**
+     * Resets all custom connection target lengths back to default base length.
+     */
+    resetAllConnectionLengths() {
+        for (const conn of this.connections) {
+            delete conn.targetLength;
+        }
+        this.render();
+    }
+
     initSVG() {
         this.svg.setAttribute('viewBox', '0 0 1000 1000');
         this.svg.style.overflow = 'visible';
@@ -90,12 +320,15 @@ class ConnectionManager {
             <g id="connections-labels-group"></g>
             <!-- 3. Preview line when creating new connections -->
             <g id="preview-group"></g>
+            <!-- 4. Interactive scaling circle when resizing arrow length -->
+            <g id="arrow-scale-overlay" style="display: none; pointer-events: none;"></g>
         `;
 
         this.arrowsGroup = this.svg.getElementById('connections-arrows-group');
         this.labelsGroup = this.svg.getElementById('connections-labels-group');
         this.connectionsGroup = this.arrowsGroup; // alias for backwards compatibility
         this.previewGroup = this.svg.getElementById('preview-group');
+        this.arrowScaleOverlay = this.svg.getElementById('arrow-scale-overlay');
 
         this.bindHoverEvents();
     }
@@ -253,7 +486,7 @@ class ConnectionManager {
     /**
      * Creates a new directed connection with a default name if not provided
      */
-    createConnection(fromId, toId, name = '', customId = null) {
+    createConnection(fromId, toId, name = '', customId = null, targetLength = null) {
         const fId = Number(fromId);
         const tId = Number(toId);
         if (!Number.isFinite(fId) || !Number.isFinite(tId)) return null;
@@ -269,11 +502,16 @@ class ConnectionManager {
             ? name.trim()
             : defaultName;
 
+        const validTargetLength = (targetLength !== null && Number.isFinite(Number(targetLength)) && Number(targetLength) > 0)
+            ? Math.round(Number(targetLength) * 10) / 10
+            : null;
+
         const connection = {
             id,
             fromId: fId,
             toId: tId,
-            name: connName
+            name: connName,
+            targetLength: validTargetLength
         };
 
         this.connections.push(connection);
@@ -403,6 +641,75 @@ class ConnectionManager {
     }
 
     /**
+     * Initializes the scaling circle preview when dragging an arrow to adjust its length.
+     */
+    startArrowScalePreview(connId, centerX, centerY) {
+        if (!this.arrowScaleOverlay) return;
+        this.arrowScaleOverlay.style.display = 'block';
+    }
+
+    /**
+     * Updates the scaling circle overlay from the click center to the mouse position.
+     * Snaps the circle radius and displayed target length to 10% of base arrow size.
+     */
+    updateArrowScalePreview(centerX, centerY, mouseX, mouseY, currentDist, snappedLength, baseLength) {
+        if (!this.arrowScaleOverlay) return;
+
+        const snappedRadius = Math.max(5, snappedLength / 2);
+        const percent = Math.round((snappedLength / baseLength) * 100);
+
+        // Position the information badge slightly above the scaling circle or near the mouse
+        let badgeX = centerX;
+        let badgeY = centerY - snappedRadius - 20;
+        if (badgeY < 30) {
+            badgeY = centerY + snappedRadius + 24;
+        }
+
+        this.arrowScaleOverlay.style.display = 'block';
+        this.arrowScaleOverlay.innerHTML = `
+            <!-- Scaling circle matching the snapped arrow diameter -->
+            <circle cx="${centerX}" cy="${centerY}" r="${snappedRadius}"
+                    fill="rgba(56, 189, 248, 0.08)" stroke="#38bdf8" stroke-width="2" stroke-dasharray="6,4"
+                    filter="url(#arrow-shadow)"/>
+            <!-- Real-time cursor distance ring (faint) -->
+            <circle cx="${centerX}" cy="${centerY}" r="${currentDist}"
+                    fill="none" stroke="rgba(255, 255, 255, 0.25)" stroke-width="1" stroke-dasharray="2,3"/>
+            <!-- Radius guide line from click center to mouse cursor -->
+            <line x1="${centerX}" y1="${centerY}" x2="${mouseX}" y2="${mouseY}"
+                  stroke="#38bdf8" stroke-width="1.6" stroke-dasharray="4,3"/>
+            <!-- Center anchor dot -->
+            <circle cx="${centerX}" cy="${centerY}" r="5" fill="#38bdf8" stroke="#ffffff" stroke-width="1.5"/>
+            <!-- Cursor position indicator -->
+            <circle cx="${mouseX}" cy="${mouseY}" r="4" fill="#38bdf8"/>
+            <!-- Snapped length & diameter floating badge -->
+            <g transform="translate(${badgeX}, ${badgeY})">
+                <rect x="-115" y="-19" width="230" height="38" rx="8"
+                      fill="rgba(14, 18, 26, 0.94)" stroke="rgba(56, 189, 248, 0.7)" stroke-width="1.2"
+                      filter="url(#arrow-shadow)"/>
+                <text x="0" y="-4" fill="#7dd3fc" font-size="12" font-weight="700"
+                      font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                      text-anchor="middle" dominant-baseline="central">
+                    Arrow Length: ${Math.round(snappedLength)}px (${percent}%)
+                </text>
+                <text x="0" y="10" fill="#94a3b8" font-size="9.5" font-weight="500"
+                      font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                      text-anchor="middle" dominant-baseline="central">
+                    Diameter: ${Math.round(snappedLength)}px • Centered on arrow
+                </text>
+            </g>
+        `;
+    }
+
+    /**
+     * Hides and cleans up the scaling circle overlay.
+     */
+    endArrowScalePreview() {
+        if (!this.arrowScaleOverlay) return;
+        this.arrowScaleOverlay.style.display = 'none';
+        this.arrowScaleOverlay.innerHTML = '';
+    }
+
+    /**
      * Main render pass for all connections, arrows, and labels
      */
     render() {
@@ -507,7 +814,7 @@ class ConnectionManager {
             const arrowPolyPoints = `${arrowTipX},${arrowTipY} ${leftWingX},${leftWingY} ${rightWingX},${rightWingY}`;
             const safeName = conn.name || '';
             const isHovered = conn.id === this.hoveredConnectionId;
-            const arrowColor = this.getConnectionLengthColor(dist, fromRadius, toRadius);
+            const arrowColor = this.getConnectionLengthColor(dist, fromRadius, toRadius, conn);
 
             // 1. Render/Update Arrow in arrowsGroup (Bottom Layer)
             let arrowGroup = this.arrowsGroup.querySelector(`.universe-connection[data-id="${conn.id}"]`);

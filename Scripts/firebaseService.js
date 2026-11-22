@@ -141,12 +141,18 @@ class FirebaseService {
         const id = Math.floor(rawId);
         const rawName = (c.name && typeof c.name === 'string' && !c.name.includes('NaN')) ? c.name.trim() : '';
 
-        return {
+        const res = {
             id,
             fromId: Math.floor(fromId),
             toId: Math.floor(toId),
             name: rawName.length > 0 ? rawName : `Connection ${id}`
         };
+
+        if (c.targetLength !== undefined && c.targetLength !== null && Number.isFinite(Number(c.targetLength)) && Number(c.targetLength) > 0) {
+            res.targetLength = Math.round(Number(c.targetLength) * 10) / 10;
+        }
+
+        return res;
     }
 
     /**

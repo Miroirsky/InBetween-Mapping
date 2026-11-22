@@ -27,6 +27,10 @@ class InteractionManager {
         this.resizeInitialScale = 1.0;
         this.resizeInitialDist = 50;
 
+        // Arrow Length Adjustment State (click & drag outward to scale)
+        this.potentialArrowResize = null;
+        this.isDraggingArrowLength = false;
+
         // Multi-Bubble Selection State (Right-click & drag marquee)
         this.selectedBubbleIds = new Set();
         this.isRightMouseDown = false;
@@ -80,12 +84,39 @@ class InteractionManager {
 
             const badge = document.createElement('div');
             badge.className = 'group-selection-badge';
-            badge.textContent = 'Selected • Drag to move';
+            badge.innerHTML = `
+                <span class="group-badge-label">Selected • Drag to move</span>
+                <button type="button" class="group-badge-btn" style="display: none;" title="Set perfect length for all connections in this selection">
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <circle cx="12" cy="12" r="6"></circle>
+                        <circle cx="12" cy="12" r="2"></circle>
+                    </svg>
+                    <span>Perfect Length</span>
+                </button>
+            `;
             groupFrame.appendChild(badge);
 
             boardFrame.appendChild(groupFrame);
             this.groupFrameEl = groupFrame;
             this.groupBadgeEl = badge;
+            this.groupBadgeLabel = badge.querySelector('.group-badge-label');
+            this.groupBadgeBtn = badge.querySelector('.group-badge-btn');
+
+            if (this.groupBadgeBtn) {
+                this.groupBadgeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (this.connectionManager && this.selectedBubbleIds.size > 0) {
+                        this.connectionManager.setSelectionConnectionsToOptimalLength(this.selectedBubbleIds);
+                        if (this.manager.savingManager) {
+                            this.manager.savingManager.saveSessionSnapshot();
+                        }
+                        if (window.app && window.app.displayManager) {
+                            window.app.displayManager.syncUI();
+                        }
+                    }
+                });
+            }
         }
     }
 
@@ -231,9 +262,31 @@ class InteractionManager {
         this.groupFrameEl.style.transform = `translate3d(${minX}px, ${minY}px, 0)`;
         this.groupFrameEl.style.width = `${Math.max(0, maxX - minX)}px`;
         this.groupFrameEl.style.height = `${Math.max(0, maxY - minY)}px`;
-        if (this.groupBadgeEl) {
+
+        if (this.groupBadgeLabel) {
+            this.groupBadgeLabel.textContent = `${selected.length} Selected • Drag to move`;
+        } else if (this.groupBadgeEl) {
             this.groupBadgeEl.textContent = `${selected.length} Selected • Drag to move`;
         }
+
+        if (this.groupBadgeBtn && this.connectionManager) {
+            const targetIds = selected.map(b => b.id);
+            const internalConns = this.connectionManager.getConnectionsForBubbleIds(targetIds, true);
+            const targetConns = internalConns.length > 0
+                ? internalConns
+                : this.connectionManager.getConnectionsForBubbleIds(targetIds, false);
+
+            if (targetConns.length > 0) {
+                this.groupBadgeBtn.style.display = 'inline-flex';
+                const textSpan = this.groupBadgeBtn.querySelector('span');
+                if (textSpan) {
+                    textSpan.textContent = `Perfect Length (${targetConns.length})`;
+                }
+            } else {
+                this.groupBadgeBtn.style.display = 'none';
+            }
+        }
+
         this.groupFrameEl.classList.add('visible');
     }
 
@@ -500,6 +553,20 @@ class InteractionManager {
                 return;
             }
 
+            // 2.5 Check if right-clicked inside the active multi-selection group or on the group frame/badge
+            if (this.selectedBubbleIds.size > 1 && (
+                e.target.closest('#group-selection-frame, .group-selection-badge') ||
+                this.isPointInGroupSelectionBounds(boardCoords.x, boardCoords.y)
+            )) {
+                const selectedBubbles = this.getSelectedBubbles();
+                if (selectedBubbles.length > 0) {
+                    this.contextMenu.showBubbleMenu(e.clientX, e.clientY, selectedBubbles[0].id, selectedBubbles, () => {
+                        this.clearSelection();
+                    });
+                    return;
+                }
+            }
+
             // 3. Ignore right-clicks inside UI panels, floating windows, menus, or modals
             if (e.target.closest(uiIgnoreSelector)) {
                 return;
@@ -603,9 +670,26 @@ class InteractionManager {
                 return;
             }
 
-            // Check if clicked on a connection line/label
+            // Check if clicked on a connection line/label to adjust its default length by dragging
             const connEl = e.target.closest('.universe-connection');
-            if (connEl) return;
+            if (connEl) {
+                const connId = Number(connEl.dataset.id);
+                if (Number.isFinite(connId) && this.connectionManager) {
+                    const arrowCenter = this.connectionManager.getConnectionCenter(connId) || { x: boardCoords.x, y: boardCoords.y };
+                    this.potentialArrowResize = {
+                        connId,
+                        arrowCenterX: arrowCenter.x,
+                        arrowCenterY: arrowCenter.y,
+                        clickX: boardCoords.x,
+                        clickY: boardCoords.y,
+                        clientX: e.clientX,
+                        clientY: e.clientY
+                    };
+                    this.isDraggingArrowLength = false;
+                    this.contextMenu.close();
+                    return;
+                }
+            }
 
             // Check if clicked inside the active multi-selection group bounding frame
             if (this.isPointInGroupSelectionBounds(boardCoords.x, boardCoords.y)) {
@@ -633,6 +717,44 @@ class InteractionManager {
         // Mouse move (Update marquee selection, outline resize, dragged bubble(s), background pan, or connection preview line)
         window.addEventListener('mousemove', (e) => {
             const boardCoords = this.getBoardCoords(e.clientX, e.clientY);
+
+            // Handle arrow length adjustment via scaling circle (centered directly on the arrow)
+            if (this.potentialArrowResize) {
+                const resizeState = this.potentialArrowResize;
+                const dragDist = Math.hypot(boardCoords.x - resizeState.clickX, boardCoords.y - resizeState.clickY);
+
+                if (!this.isDraggingArrowLength && dragDist > 4) {
+                    this.isDraggingArrowLength = true;
+                    document.body.classList.add('is-resizing-arrow');
+                    if (this.connectionManager) {
+                        const arrowCenter = this.connectionManager.getConnectionCenter(resizeState.connId) || {
+                            x: resizeState.arrowCenterX,
+                            y: resizeState.arrowCenterY
+                        };
+                        this.connectionManager.startArrowScalePreview(resizeState.connId, arrowCenter.x, arrowCenter.y);
+                    }
+                }
+
+                if (this.isDraggingArrowLength && this.connectionManager) {
+                    const arrowCenter = this.connectionManager.getConnectionCenter(resizeState.connId) || {
+                        x: resizeState.arrowCenterX,
+                        y: resizeState.arrowCenterY
+                    };
+                    const dist = Math.hypot(boardCoords.x - arrowCenter.x, boardCoords.y - arrowCenter.y);
+                    const baseLength = this.connectionManager.getBaseArrowLength();
+                    const snapStep = Math.max(1, baseLength * 0.1); // Snap to 10% of base arrow size
+                    const rawDiameter = 2 * dist;
+                    const snappedLength = Math.max(snapStep, Math.round(rawDiameter / snapStep) * snapStep);
+
+                    this.connectionManager.updateArrowScalePreview(
+                        arrowCenter.x, arrowCenter.y,
+                        boardCoords.x, boardCoords.y,
+                        dist, snappedLength, baseLength
+                    );
+                    this.connectionManager.setConnectionTargetLength(resizeState.connId, snappedLength, false);
+                    return;
+                }
+            }
 
             // 1. Handle right-click drag marquee selection
             if (this.isRightMouseDown) {
@@ -782,7 +904,7 @@ class InteractionManager {
             }
         });
 
-        // Mouse up (End right-click marquee selection, outline resize, bubble/group drag, or background pan)
+        // Mouse up (End right-click marquee selection, outline resize, arrow length resize, bubble/group drag, or background pan)
         window.addEventListener('mouseup', (e) => {
             if (e.button === 2 || this.isRightMouseDown) {
                 this.isRightMouseDown = false;
@@ -794,6 +916,29 @@ class InteractionManager {
                     document.body.classList.remove('is-selecting-bubbles');
                     this.updateGroupSelectionFrame();
                 }
+            }
+
+            if (this.isDraggingArrowLength) {
+                const connId = this.potentialArrowResize ? this.potentialArrowResize.connId : null;
+                this.isDraggingArrowLength = false;
+                this.potentialArrowResize = null;
+                document.body.classList.remove('is-resizing-arrow');
+
+                if (this.connectionManager) {
+                    this.connectionManager.endArrowScalePreview();
+                    if (connId) {
+                        const conn = this.connectionManager.getConnectionById(connId);
+                        if (conn && this.manager.onlineManager && this.manager.onlineManager.isOnline) {
+                            this.manager.onlineManager.onConnectionRenamed(conn);
+                        }
+                    }
+                }
+
+                if (this.manager.savingManager && (!this.manager.onlineManager || !this.manager.onlineManager.isOnline)) {
+                    this.manager.savingManager.saveSessionSnapshot();
+                }
+            } else {
+                this.potentialArrowResize = null;
             }
 
             if (this.resizingBubble) {
@@ -899,6 +1044,15 @@ class InteractionManager {
         // Cancel connecting mode or clear selection on Escape
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
+                if (this.isDraggingArrowLength) {
+                    this.isDraggingArrowLength = false;
+                    this.potentialArrowResize = null;
+                    document.body.classList.remove('is-resizing-arrow');
+                    if (this.connectionManager) {
+                        this.connectionManager.endArrowScalePreview();
+                    }
+                    return;
+                }
                 if (this.connectionManager && this.connectionManager.pendingSourceId) {
                     this.connectionManager.cancelConnecting();
                 } else if (this.selectedBubbleIds.size > 0) {

@@ -430,7 +430,7 @@ class OnlineManager {
                 state.connections.forEach(c => {
                     const clean = this.firebaseService.sanitizeConnection(c, c && c.id);
                     if (clean) {
-                        this.connectionManager.createConnection(clean.fromId, clean.toId, clean.name, clean.id);
+                        this.connectionManager.createConnection(clean.fromId, clean.toId, clean.name, clean.id, clean.targetLength || null);
                     }
                 });
             }
@@ -486,7 +486,7 @@ class OnlineManager {
                 rawConns.forEach(c => {
                     const clean = this.firebaseService.sanitizeConnection(c, c && c.id);
                     if (clean && this.bubbleManager.getBubbleById(clean.fromId) && this.bubbleManager.getBubbleById(clean.toId)) {
-                        this.connectionManager.createConnection(clean.fromId, clean.toId, clean.name, clean.id);
+                        this.connectionManager.createConnection(clean.fromId, clean.toId, clean.name, clean.id, clean.targetLength || null);
                     }
                 });
             }
@@ -618,9 +618,12 @@ class OnlineManager {
                         if (localConn.name !== rc.name) {
                             this.connectionManager.renameConnection(id, rc.name);
                         }
+                        if (rc.targetLength !== undefined && localConn.targetLength !== rc.targetLength) {
+                            this.connectionManager.setConnectionTargetLength(id, rc.targetLength, false);
+                        }
                     } else {
                         if (this.bubbleManager.getBubbleById(rc.fromId) && this.bubbleManager.getBubbleById(rc.toId)) {
-                            this.connectionManager.createConnection(rc.fromId, rc.toId, rc.name, id);
+                            this.connectionManager.createConnection(rc.fromId, rc.toId, rc.name, id, rc.targetLength || null);
                         }
                     }
                 });
@@ -744,8 +747,11 @@ class OnlineManager {
                 if (data.name !== undefined && local.name !== data.name) {
                     this.connectionManager.renameConnection(id, data.name);
                 }
+                if (data.targetLength !== undefined && local.targetLength !== data.targetLength) {
+                    this.connectionManager.setConnectionTargetLength(id, data.targetLength, false);
+                }
             } else if (data.fromId && data.toId) {
-                this.connectionManager.createConnection(data.fromId, data.toId, data.name, id);
+                this.connectionManager.createConnection(data.fromId, data.toId, data.name, id, data.targetLength || null);
             }
         } finally {
             this.isApplyingRemote = false;

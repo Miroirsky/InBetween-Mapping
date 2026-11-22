@@ -6,34 +6,31 @@
  */
 
 class ViewMenu {
-    constructor(savingManager, paramsManager, interactionManager = null, exportManager = null, onlineManager = null, connectionManager = null) {
+    constructor(savingManager, paramsManager, interactionManager = null, exportManager = null, onlineManager = null, connectionManager = null, displayManager = null) {
         this.savingManager = savingManager;
         this.paramsManager = paramsManager;
         this.interactionManager = interactionManager;
         this.exportManager = exportManager;
         this.onlineManager = onlineManager;
         this.connectionManager = connectionManager;
+        this.displayManager = displayManager;
         this.isOpen = false;
-        this.isDisplayOpen = false;
-        this.connectionViewActive = false;
 
         this.container = null;
         this.btnTrigger = null;
         this.dropdown = null;
-        this.btnDisplay = null;
-        this.displayDropdown = null;
-        this.btnConnectionView = null;
         this.btnOnline = null;
 
         this.initDOM();
         this.bindEvents();
     }
 
+    setDisplayManager(displayManager) {
+        this.displayManager = displayManager;
+    }
+
     setConnectionManager(connectionManager) {
         this.connectionManager = connectionManager;
-        if (this.connectionManager) {
-            this.connectionManager.setConnectionView(this.connectionViewActive);
-        }
     }
 
     setOnlineManager(onlineManager) {
@@ -119,6 +116,18 @@ class ViewMenu {
                             <span class="view-item-subtitle">Noise parameters</span>
                         </div>
                     </button>
+                    <button type="button" class="view-menu-item" data-action="display" role="menuitem">
+                        <span class="view-item-icon">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </span>
+                        <div class="view-item-text">
+                            <span class="view-item-title">Display</span>
+                            <span class="view-item-subtitle">Connection view & modes</span>
+                        </div>
+                    </button>
                     <div class="view-menu-divider"></div>
                     <button type="button" class="view-menu-item" data-action="reset-view" role="menuitem">
                         <span class="view-item-icon">
@@ -132,44 +141,6 @@ class ViewMenu {
                             <span class="view-item-subtitle">Center & 100% zoom</span>
                         </div>
                     </button>
-                </div>
-            </div>
-
-            <div class="top-nav-group">
-                <button type="button" id="display-menu-btn" class="view-menu-btn display-menu-btn" aria-haspopup="true" aria-expanded="false" title="Display Options">
-                    <span class="display-active-dot"></span>
-                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="menu-icon">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                        <circle cx="12" cy="12" r="3"></circle>
-                    </svg>
-                    <span class="menu-label">Display</span>
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon">
-                        <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                </button>
-                <div id="display-menu-dropdown" class="view-menu-dropdown display-menu-dropdown" role="menu">
-                    <button type="button" id="display-connection-view-btn" class="view-menu-item display-toggle-item" role="menuitemcheckbox" aria-checked="false">
-                        <span class="view-item-icon">
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="5" cy="12" r="3"></circle>
-                                <circle cx="19" cy="12" r="3"></circle>
-                                <line x1="8" y1="12" x2="16" y2="12"></line>
-                            </svg>
-                        </span>
-                        <div class="view-item-text">
-                            <span class="view-item-title">Connection View</span>
-                            <span class="view-item-subtitle">Length color gradient</span>
-                        </div>
-                        <span class="display-toggle-pill" id="connection-view-toggle-pill">OFF</span>
-                    </button>
-                    <div class="display-legend-card">
-                        <div class="display-legend-gradient"></div>
-                        <div class="display-legend-labels">
-                            <span class="legend-blue">0.5× Short</span>
-                            <span class="legend-white">1.0× Normal</span>
-                            <span class="legend-red">2.0× Long</span>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -190,10 +161,6 @@ class ViewMenu {
         this.container = container;
         this.btnTrigger = container.querySelector('#view-menu-btn');
         this.dropdown = container.querySelector('#view-menu-dropdown');
-        this.btnDisplay = container.querySelector('#display-menu-btn');
-        this.displayDropdown = container.querySelector('#display-menu-dropdown');
-        this.btnConnectionView = container.querySelector('#display-connection-view-btn');
-        this.togglePill = container.querySelector('#connection-view-toggle-pill');
         this.btnOnline = container.querySelector('#online-menu-btn');
     }
 
@@ -201,26 +168,8 @@ class ViewMenu {
         // Toggle View menu on button click
         this.btnTrigger.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (this.isDisplayOpen) this.closeDisplay();
             this.toggle();
         });
-
-        // Toggle Display menu on button click
-        if (this.btnDisplay) {
-            this.btnDisplay.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (this.isOpen) this.close();
-                this.toggleDisplay();
-            });
-        }
-
-        // Toggle Connection View mode
-        if (this.btnConnectionView) {
-            this.btnConnectionView.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.setConnectionView(!this.connectionViewActive);
-            });
-        }
 
         // Online Room button click
         if (this.btnOnline) {
@@ -248,6 +197,8 @@ class ViewMenu {
                     this.exportManager.open();
                 } else if (action === 'params' && this.paramsManager) {
                     this.paramsManager.open();
+                } else if (action === 'display' && this.displayManager) {
+                    this.displayManager.open();
                 } else if (action === 'reset-view' && this.interactionManager) {
                     this.interactionManager.resetView();
                 }
@@ -259,36 +210,14 @@ class ViewMenu {
             if (this.isOpen && !this.container.contains(e.target)) {
                 this.close();
             }
-            if (this.isDisplayOpen && !this.container.contains(e.target)) {
-                this.closeDisplay();
-            }
         });
 
         // Close on Escape key
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 if (this.isOpen) this.close();
-                if (this.isDisplayOpen) this.closeDisplay();
             }
         });
-    }
-
-    setConnectionView(enabled) {
-        this.connectionViewActive = !!enabled;
-        if (this.connectionManager) {
-            this.connectionManager.setConnectionView(this.connectionViewActive);
-        }
-        if (this.btnConnectionView) {
-            this.btnConnectionView.classList.toggle('is-selected', this.connectionViewActive);
-            this.btnConnectionView.setAttribute('aria-checked', String(this.connectionViewActive));
-        }
-        if (this.togglePill) {
-            this.togglePill.textContent = this.connectionViewActive ? 'ON' : 'OFF';
-            this.togglePill.classList.toggle('is-on', this.connectionViewActive);
-        }
-        if (this.btnDisplay) {
-            this.btnDisplay.classList.toggle('has-active-mode', this.connectionViewActive);
-        }
     }
 
     open() {
@@ -310,32 +239,6 @@ class ViewMenu {
             this.close();
         } else {
             this.open();
-        }
-    }
-
-    openDisplay() {
-        this.isDisplayOpen = true;
-        if (this.displayDropdown) this.displayDropdown.classList.add('is-open');
-        if (this.btnDisplay) {
-            this.btnDisplay.classList.add('is-active');
-            this.btnDisplay.setAttribute('aria-expanded', 'true');
-        }
-    }
-
-    closeDisplay() {
-        this.isDisplayOpen = false;
-        if (this.displayDropdown) this.displayDropdown.classList.remove('is-open');
-        if (this.btnDisplay) {
-            this.btnDisplay.classList.remove('is-active');
-            this.btnDisplay.setAttribute('aria-expanded', 'false');
-        }
-    }
-
-    toggleDisplay() {
-        if (this.isDisplayOpen) {
-            this.closeDisplay();
-        } else {
-            this.openDisplay();
         }
     }
 }

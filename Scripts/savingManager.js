@@ -283,7 +283,8 @@ class SavingManager {
                 id: Math.floor(Number(c.id)),
                 fromId: Math.floor(Number(c.fromId)),
                 toId: Math.floor(Number(c.toId)),
-                name: c.name || `Connection ${Math.floor(Number(c.id))}`
+                name: c.name || `Connection ${Math.floor(Number(c.id))}`,
+                targetLength: (c.targetLength !== null && c.targetLength !== undefined && Number.isFinite(Number(c.targetLength))) ? Number(c.targetLength) : null
             }));
 
         const noiseData = this.noiseConfig ? {
@@ -350,7 +351,7 @@ class SavingManager {
 
                     if (this.connectionManager && Array.isArray(session.connections)) {
                         session.connections.forEach(c => {
-                            this.connectionManager.createConnection(c.fromId, c.toId, c.name);
+                            this.connectionManager.createConnection(c.fromId, c.toId, c.name, c.id || null, c.targetLength || null);
                         });
                     }
 
@@ -582,7 +583,7 @@ class SavingManager {
         // 3. Recreate connections
         if (this.connectionManager && Array.isArray(record.connections)) {
             record.connections.forEach(c => {
-                this.connectionManager.createConnection(c.fromId, c.toId, c.name);
+                this.connectionManager.createConnection(c.fromId, c.toId, c.name, c.id || null, c.targetLength || null);
             });
         }
 

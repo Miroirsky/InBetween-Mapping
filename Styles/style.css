@@ -391,10 +391,10 @@ body.is-resizing-bubble * {
 
 .group-selection-badge {
     position: absolute;
-    top: -26px;
+    top: -28px;
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(14, 18, 26, 0.92);
+    background: rgba(14, 18, 26, 0.94);
     border: 1px solid rgba(56, 189, 248, 0.5);
     color: #7dd3fc;
     font-size: 11px;
@@ -404,7 +404,41 @@ body.is-resizing-bubble * {
     border-radius: 999px;
     white-space: nowrap;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
-    pointer-events: none;
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.group-badge-label {
+    display: inline-block;
+}
+
+.group-badge-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.16);
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.group-badge-btn:hover {
+    background: rgba(56, 189, 248, 0.32);
+    border-color: #38bdf8;
+    color: #ffffff;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.45);
+    transform: scale(1.03);
+}
+
+.group-badge-btn:active {
+    transform: scale(0.97);
 }
 
 body.is-selecting-bubbles,
@@ -1077,62 +1111,104 @@ body.is-connecting-mode * {
     align-items: center;
 }
 
-.display-menu-btn .display-active-dot {
+/* ==================================================================
+   Display Window Specific Styles
+   ================================================================== */
+.display-window-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    font-family: inherit;
+    color: #f3f4f6;
+}
+
+.display-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.display-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.display-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.display-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #ffffff;
+    letter-spacing: 0.2px;
+}
+
+.display-section-subtitle {
+    font-size: 11px;
+    color: #9ca3af;
+}
+
+.display-section-desc {
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: #9ca3af;
+}
+
+.display-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #9ca3af;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.display-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+}
+
+.display-toggle-btn .display-toggle-indicator {
     width: 7px;
     height: 7px;
     border-radius: 50%;
+    background: #6b7280;
+    transition: all 0.2s ease;
+}
+
+.display-toggle-btn.is-on {
+    background: rgba(56, 189, 248, 0.18);
+    border-color: rgba(56, 189, 248, 0.5);
+    color: #38bdf8;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
+}
+
+.display-toggle-btn.is-on .display-toggle-indicator {
     background: #38bdf8;
-    box-shadow: 0 0 8px rgba(56, 189, 248, 0.85);
-    display: none;
+    box-shadow: 0 0 6px #38bdf8;
 }
 
-.display-menu-btn.has-active-mode {
-    border-color: rgba(56, 189, 248, 0.45);
-}
-
-.display-menu-btn.has-active-mode .display-active-dot {
-    display: inline-block;
-}
-
-.display-menu-dropdown {
-    min-width: 245px;
-    padding: 6px;
-}
-
-.display-toggle-item {
-    justify-content: space-between;
-}
-
-.display-toggle-item .view-item-text {
-    flex: 1;
-}
-
-.display-toggle-item.is-selected {
-    background: rgba(56, 189, 248, 0.12);
-    border: 1px solid rgba(56, 189, 248, 0.28);
-}
-
-.display-toggle-pill {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.1);
-    color: #9ca3af;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    transition: all 0.15s ease;
-}
-
-.display-toggle-pill.is-on {
-    background: rgba(56, 189, 248, 0.22);
-    color: #7dd3fc;
-    border-color: rgba(56, 189, 248, 0.55);
-    box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+.display-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    margin: 2px 0;
 }
 
 .display-legend-card {
-    margin-top: 6px;
     padding: 8px 10px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1166,6 +1242,86 @@ body.is-connecting-mode * {
 
 .display-legend-labels .legend-red {
     color: #f87171;
+}
+
+.display-metrics-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 6px;
+}
+
+.display-metric-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+}
+
+.display-metric-row .metric-label {
+    color: #9ca3af;
+}
+
+.display-metric-row .metric-val {
+    color: #ffffff;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.display-actions-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.display-action-btn {
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    background: rgba(56, 189, 248, 0.12);
+    color: #7dd3fc;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: center;
+}
+
+.display-action-btn:hover {
+    background: rgba(56, 189, 248, 0.24);
+    border-color: #38bdf8;
+    color: #ffffff;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
+}
+
+.display-reset-btn {
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.06);
+    color: #e5e7eb;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: center;
+}
+
+.display-reset-btn:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+
+/* Arrow Scaling Active Cursor State */
+body.is-resizing-arrow,
+body.is-resizing-arrow * {
+    cursor: crosshair !important;
+    user-select: none !important;
 }
 
 /* ==================================================================

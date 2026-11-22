@@ -441,7 +441,8 @@ class ExportManager {
             id: c.id,
             fromId: c.fromId,
             toId: c.toId,
-            name: c.name
+            name: c.name,
+            targetLength: (c.targetLength !== null && c.targetLength !== undefined && Number.isFinite(Number(c.targetLength))) ? Number(c.targetLength) : null
         }));
 
         const noiseData = (includeNoise && this.noiseConfig) ? {
@@ -807,7 +808,7 @@ class ExportManager {
         // 3. Recreate connections
         if (this.connectionManager && Array.isArray(data.connections)) {
             data.connections.forEach(c => {
-                this.connectionManager.createConnection(c.fromId, c.toId, c.name);
+                this.connectionManager.createConnection(c.fromId, c.toId, c.name, c.id || null, c.targetLength || null);
             });
         }
 

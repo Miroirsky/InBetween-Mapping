@@ -80,7 +80,23 @@ class BubblePhysics {
                     ? this.manager.getBubbleRadius(b2)
                     : radius;
 
-                const pairTargetDistance = (r1 + r2) + diameter * gapMultiplier;
+                // If b1 and b2 are connected, use their connection target length for repulsion threshold
+                let connLength = null;
+                if (this.connectionManager && this.connectionManager.connections.length > 0) {
+                    const conn = this.connectionManager.connections.find(
+                        c => (c.fromId === b1.id && c.toId === b2.id) || (c.fromId === b2.id && c.toId === b1.id)
+                    );
+                    if (conn) {
+                        connLength = typeof this.connectionManager.getConnectionTargetLength === 'function'
+                            ? this.connectionManager.getConnectionTargetLength(conn)
+                            : null;
+                    }
+                }
+
+                const targetArrowLength = (connLength !== null && Number.isFinite(connLength))
+                    ? connLength
+                    : diameter * gapMultiplier;
+                const pairTargetDistance = (r1 + r2) + targetArrowLength;
 
                 let dx = b2.x - b1.x;
                 let dy = b2.y - b1.y;
@@ -146,7 +162,10 @@ class BubblePhysics {
                 const r2 = typeof this.manager.getBubbleRadius === 'function'
                     ? this.manager.getBubbleRadius(b2)
                     : radius;
-                const pairTargetDistance = (r1 + r2) + diameter * gapMultiplier;
+                const targetArrowLength = typeof this.connectionManager.getConnectionTargetLength === 'function'
+                    ? this.connectionManager.getConnectionTargetLength(conn)
+                    : diameter * gapMultiplier;
+                const pairTargetDistance = (r1 + r2) + targetArrowLength;
 
                 let dx = b2.x - b1.x;
                 let dy = b2.y - b1.y;

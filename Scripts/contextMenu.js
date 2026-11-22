@@ -394,6 +394,13 @@ class ContextMenu {
             const allLocked = selectedBubbles.every(b => b.isLocked);
             const targetIds = selectedBubbles.map(b => b.id);
 
+            const internalConns = this.connectionManager
+                ? this.connectionManager.getConnectionsForBubbleIds(targetIds, true)
+                : [];
+            const targetConns = internalConns.length > 0
+                ? internalConns
+                : (this.connectionManager ? this.connectionManager.getConnectionsForBubbleIds(targetIds, false) : []);
+
             const items = [
                 {
                     label: `Change Color (${count})`,
@@ -434,7 +441,34 @@ class ContextMenu {
                             }
                         });
                     }
-                },
+                }
+            ];
+
+            if (targetConns.length > 0) {
+                items.push({
+                    label: `Set to Perfect Length (${targetConns.length})`,
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <circle cx="12" cy="12" r="6"></circle>
+                            <circle cx="12" cy="12" r="2"></circle>
+                        </svg>
+                    `,
+                    action: () => {
+                        if (this.connectionManager) {
+                            this.connectionManager.setSelectionConnectionsToOptimalLength(targetIds);
+                            if (window.app && window.app.savingManager) {
+                                window.app.savingManager.saveSessionSnapshot();
+                            }
+                            if (window.app && window.app.displayManager) {
+                                window.app.displayManager.syncUI();
+                            }
+                        }
+                    }
+                });
+            }
+
+            items.push(
                 {
                     label: 'Clear Selection',
                     icon: `
@@ -470,7 +504,7 @@ class ContextMenu {
                         });
                     }
                 }
-            ];
+            );
 
             this.renderMenu(`${count} Universes Selected`, items, x, y);
             return;
@@ -529,7 +563,35 @@ class ContextMenu {
                         this.connectionManager.startConnecting(bubbleId);
                     }
                 }
-            },
+            }
+        ];
+
+        const attachedConns = this.connectionManager
+            ? this.connectionManager.getConnectionsForBubbleIds([bubbleId], false)
+            : [];
+        if (attachedConns.length > 0) {
+            items.push({
+                label: `Set Arrows to Perfect Length (${attachedConns.length})`,
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <circle cx="12" cy="12" r="6"></circle>
+                        <circle cx="12" cy="12" r="2"></circle>
+                    </svg>
+                `,
+                action: () => {
+                    this.connectionManager.setMultipleConnectionsToOptimalLength(attachedConns);
+                    if (window.app && window.app.savingManager) {
+                        window.app.savingManager.saveSessionSnapshot();
+                    }
+                    if (window.app && window.app.displayManager) {
+                        window.app.displayManager.syncUI();
+                    }
+                }
+            });
+        }
+
+        items.push(
             {
                 label: isLocked ? 'Unlock Bubble' : 'Lock Bubble',
                 icon: isLocked ? `
@@ -579,7 +641,7 @@ class ContextMenu {
                     });
                 }
             }
-        ];
+        );
 
         this.renderMenu(bubble.name || 'Universe', items, x, y);
     }
@@ -618,6 +680,77 @@ class ContextMenu {
                 }
             },
             {
+                label: 'Set to Perfect Length',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <circle cx="12" cy="12" r="6"></circle>
+                        <circle cx="12" cy="12" r="2"></circle>
+                    </svg>
+                `,
+                action: () => {
+                    this.connectionManager.setConnectionToOptimalLength(connectionId);
+                    if (window.app && window.app.savingManager) {
+                        window.app.savingManager.saveSessionSnapshot();
+                    }
+                    if (window.app && window.app.displayManager) {
+                        window.app.displayManager.syncUI();
+                    }
+                }
+            }
+        ];
+
+        const interaction = window.app && window.app.interactionManager;
+        const selectedIds = (interaction && interaction.selectedBubbleIds && interaction.selectedBubbleIds.size > 1)
+            ? Array.from(interaction.selectedBubbleIds)
+            : null;
+        let selectionConns = [];
+        if (selectedIds && this.connectionManager) {
+            selectionConns = this.connectionManager.getConnectionsForBubbleIds(selectedIds, true);
+            if (selectionConns.length === 0) {
+                selectionConns = this.connectionManager.getConnectionsForBubbleIds(selectedIds, false);
+            }
+        }
+
+        if (selectionConns.length > 1) {
+            items.push({
+                label: `Set Perfect Length of Selection (${selectionConns.length})`,
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <circle cx="12" cy="12" r="6"></circle>
+                        <circle cx="12" cy="12" r="2"></circle>
+                    </svg>
+                `,
+                action: () => {
+                    this.connectionManager.setMultipleConnectionsToOptimalLength(selectionConns);
+                    if (window.app && window.app.savingManager) {
+                        window.app.savingManager.saveSessionSnapshot();
+                    }
+                    if (window.app && window.app.displayManager) {
+                        window.app.displayManager.syncUI();
+                    }
+                }
+            });
+        }
+
+        items.push(
+            {
+                label: 'Reset Arrow Length',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                        <polyline points="3 3 3 8 8 8"></polyline>
+                    </svg>
+                `,
+                action: () => {
+                    this.connectionManager.setConnectionTargetLength(connectionId, null);
+                    if (window.app && window.app.savingManager) {
+                        window.app.savingManager.saveSessionSnapshot();
+                    }
+                }
+            },
+            {
                 label: 'Remove Connection',
                 danger: true,
                 icon: `
@@ -630,7 +763,7 @@ class ContextMenu {
                     this.connectionManager.removeConnection(connectionId);
                 }
             }
-        ];
+        );
 
         this.renderMenu(conn.name || 'Connection', items, x, y);
     }

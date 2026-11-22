@@ -49,6 +49,12 @@ const WindowConfig = {
         defaultLeft: 360
     },
 
+    displayWindow: {
+        width: 320,
+        defaultTop: 60,
+        defaultLeft: 360
+    },
+
     /**
      * Base z-index for floating windows
      */

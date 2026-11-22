@@ -107,9 +107,14 @@ document.addEventListener('DOMContentLoaded', () => {
         savingManager.initAutoRestore();
     }
 
+    let displayManager = null;
+    if (window.DisplayManager && connectionManager) {
+        displayManager = new window.DisplayManager(connectionManager, windowConfig, savingManager);
+    }
+
     let viewMenu = null;
     if (window.ViewMenu && savingManager && paramsManager) {
-        viewMenu = new window.ViewMenu(savingManager, paramsManager, interactionManager, exportManager, null, connectionManager);
+        viewMenu = new window.ViewMenu(savingManager, paramsManager, interactionManager, exportManager, null, connectionManager, displayManager);
     }
 
     // 7. Firebase & Online Multiplayer Room Setup
@@ -156,6 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
         savingManager,
         exportManager,
         paramsManager,
+        displayManager,
         viewMenu,
         firebaseConfig,
         firebaseService,
