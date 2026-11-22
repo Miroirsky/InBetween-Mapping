@@ -10,6 +10,9 @@ class ParamsManager {
         this.config = noiseConfig;
         this.windowConfig = windowConfig || window.WindowConfig;
 
+        this.storageKey = 'inbetween_mapping_noise_params';
+        this.presetsStorageKey = 'inbetween_mapping_noise_presets';
+
         // Baseline reference values from default configuration
         this.defaults = {
             noiseSize: 1.0,
@@ -22,9 +25,130 @@ class ParamsManager {
             colorHigh: '#ffffff'
         };
 
+        // Restore saved background params immediately on startup
+        this.loadSavedParams();
+
         this.window = null;
         this.initWindow();
         this.bindKeyboardShortcut();
+    }
+
+    /**
+     * Persists current background noise parameters to localStorage.
+     */
+    saveCurrentParams() {
+        try {
+            const payload = {
+                noiseSize: this.config.noiseSize,
+                noiseSpeed: this.config.noiseSpeed,
+                steps: this.config.steps,
+                octaves: this.config.octaves,
+                invert: !!this.config.invert,
+                maintainAspectRatio: !!this.config.maintainAspectRatio,
+                colorLow: this.config.colorLow || this.defaults.colorLow,
+                colorHigh: this.config.colorHigh || this.defaults.colorHigh
+            };
+            localStorage.setItem(this.storageKey, JSON.stringify(payload));
+        } catch (err) {
+            console.warn('Could not save background params:', err);
+        }
+    }
+
+    /**
+     * Loads saved background noise parameters from localStorage if present.
+     */
+    loadSavedParams() {
+        try {
+            const raw = localStorage.getItem(this.storageKey);
+            if (!raw) return;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object') return;
+
+            if (Number.isFinite(Number(parsed.noiseSize)) && Number(parsed.noiseSize) > 0) {
+                this.config.noiseSize = Number(parsed.noiseSize);
+            }
+            if (Number.isFinite(Number(parsed.noiseSpeed)) && Number(parsed.noiseSpeed) >= 0) {
+                this.config.noiseSpeed = Number(parsed.noiseSpeed);
+            }
+            if (Number.isFinite(Number(parsed.steps)) && Number(parsed.steps) >= 1) {
+                this.config.steps = Math.round(Number(parsed.steps));
+            }
+            if (Number.isFinite(Number(parsed.octaves)) && Number(parsed.octaves) >= 1) {
+                this.config.octaves = Math.min(4, Math.max(1, Math.round(Number(parsed.octaves))));
+            }
+            if (typeof parsed.invert === 'boolean') {
+                this.config.invert = parsed.invert;
+            }
+            if (typeof parsed.maintainAspectRatio === 'boolean') {
+                this.config.maintainAspectRatio = parsed.maintainAspectRatio;
+            }
+            if (typeof parsed.colorLow === 'string' && parsed.colorLow.trim()) {
+                this.config.colorLow = parsed.colorLow.trim();
+            }
+            if (typeof parsed.colorHigh === 'string' && parsed.colorHigh.trim()) {
+                this.config.colorHigh = parsed.colorHigh.trim();
+            }
+        } catch (err) {
+            console.warn('Could not load saved background params:', err);
+        }
+    }
+
+    getAllSavedPresets() {
+        try {
+            const raw = localStorage.getItem(this.presetsStorageKey);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (err) {
+            return [];
+        }
+    }
+
+    setAllSavedPresets(presets) {
+        try {
+            localStorage.setItem(this.presetsStorageKey, JSON.stringify(presets));
+        } catch (err) {
+            console.warn('Could not store background presets:', err);
+        }
+    }
+
+    savePreset(name) {
+        const cleanName = (name || '').trim() || `Background ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        const preset = {
+            id: `bg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: cleanName,
+            params: {
+                noiseSize: this.config.noiseSize,
+                noiseSpeed: this.config.noiseSpeed,
+                steps: this.config.steps,
+                octaves: this.config.octaves,
+                invert: !!this.config.invert,
+                maintainAspectRatio: !!this.config.maintainAspectRatio,
+                colorLow: this.config.colorLow || this.defaults.colorLow,
+                colorHigh: this.config.colorHigh || this.defaults.colorHigh
+            }
+        };
+        const presets = this.getAllSavedPresets();
+        presets.unshift(preset);
+        this.setAllSavedPresets(presets);
+        this.renderSavedPresets();
+        return preset;
+    }
+
+    applyPreset(presetId) {
+        const presets = this.getAllSavedPresets();
+        const found = presets.find(p => p.id === presetId);
+        if (!found || !found.params) return;
+
+        Object.assign(this.config, found.params);
+        this.saveCurrentParams();
+        this.syncFromConfig();
+    }
+
+    deletePreset(presetId) {
+        const presets = this.getAllSavedPresets().filter(p => p.id !== presetId);
+        this.setAllSavedPresets(presets);
+        this.renderSavedPresets();
     }
 
     initWindow() {
@@ -121,12 +245,26 @@ class ParamsManager {
                             Reset to Default (100%)
                         </button>
                     </div>
+
+                    <!-- Saved Background Presets -->
+                    <div class="params-saves-section">
+                        <div class="label-row">
+                            <label>Saved Backgrounds</label>
+                            <span id="params-saves-count" class="value-display">0</span>
+                        </div>
+                        <div class="params-save-input-row">
+                            <input type="text" id="params-save-name-input" class="save-name-input" placeholder="Preset name..." maxlength="30" autocomplete="off" spellcheck="false">
+                            <button type="button" id="btn-save-bg-preset" class="save-action-btn primary">Save</button>
+                        </div>
+                        <div id="params-saves-list" class="params-saves-list"></div>
+                    </div>
                 </div>
             `
         });
 
         this.bindEvents();
         this.syncFromConfig();
+        this.renderSavedPresets();
     }
 
     bindEvents() {
@@ -140,6 +278,7 @@ class ParamsManager {
             const val = this.defaults.noiseSize * (pct / 100);
             this.config.noiseSize = val;
             sizeDisplay.textContent = `${Math.round(pct)}% (${val.toFixed(2)})`;
+            this.saveCurrentParams();
         });
 
         // Noise Speed
@@ -150,6 +289,7 @@ class ParamsManager {
             const val = this.defaults.noiseSpeed * (pct / 100);
             this.config.noiseSpeed = val;
             speedDisplay.textContent = `${Math.round(pct)}% (${val.toFixed(3)})`;
+            this.saveCurrentParams();
         });
 
         // Steps
@@ -160,6 +300,7 @@ class ParamsManager {
             const val = Math.max(2, Math.round(this.defaults.steps * (pct / 100)));
             this.config.steps = val;
             stepsDisplay.textContent = `${Math.round(pct)}% (${val})`;
+            this.saveCurrentParams();
         });
 
         // Octaves
@@ -170,6 +311,7 @@ class ParamsManager {
             const val = Math.min(4, Math.max(1, Math.round(this.defaults.octaves * (pct / 100))));
             this.config.octaves = val;
             octavesDisplay.textContent = `${Math.round(pct)}% (${val})`;
+            this.saveCurrentParams();
         });
 
         // Noise Colors
@@ -182,6 +324,7 @@ class ParamsManager {
             colorLowInput.addEventListener('input', (e) => {
                 this.config.colorLow = e.target.value;
                 if (colorLowHex) colorLowHex.textContent = e.target.value.toUpperCase();
+                this.saveCurrentParams();
             });
         }
 
@@ -189,6 +332,7 @@ class ParamsManager {
             colorHighInput.addEventListener('input', (e) => {
                 this.config.colorHigh = e.target.value;
                 if (colorHighHex) colorHighHex.textContent = e.target.value.toUpperCase();
+                this.saveCurrentParams();
             });
         }
 
@@ -199,6 +343,7 @@ class ParamsManager {
                 const high = btn.dataset.high || '#ffffff';
                 this.config.colorLow = low;
                 this.config.colorHigh = high;
+                this.saveCurrentParams();
                 this.syncFromConfig();
             });
         });
@@ -207,17 +352,86 @@ class ParamsManager {
         const invertInput = body.querySelector('#param-invert');
         invertInput.addEventListener('change', (e) => {
             this.config.invert = e.target.checked;
+            this.saveCurrentParams();
         });
 
         const aspectInput = body.querySelector('#param-aspect');
         aspectInput.addEventListener('change', (e) => {
             this.config.maintainAspectRatio = e.target.checked;
+            this.saveCurrentParams();
         });
 
         // Reset button
         const resetBtn = body.querySelector('#btn-reset-params-default');
         resetBtn.addEventListener('click', () => {
             this.resetToDefaults();
+        });
+
+        // Save Background Preset
+        const savePresetInput = body.querySelector('#params-save-name-input');
+        const savePresetBtn = body.querySelector('#btn-save-bg-preset');
+        const handleSavePreset = () => {
+            if (!savePresetInput) return;
+            this.savePreset(savePresetInput.value);
+            savePresetInput.value = '';
+        };
+        if (savePresetBtn) {
+            savePresetBtn.addEventListener('click', handleSavePreset);
+        }
+        if (savePresetInput) {
+            savePresetInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSavePreset();
+                }
+            });
+        }
+    }
+
+    renderSavedPresets() {
+        const body = this.window && this.window.getBodyElement();
+        if (!body) return;
+        const listEl = body.querySelector('#params-saves-list');
+        const countEl = body.querySelector('#params-saves-count');
+        if (!listEl) return;
+
+        const presets = this.getAllSavedPresets();
+        if (countEl) countEl.textContent = String(presets.length);
+
+        if (presets.length === 0) {
+            listEl.innerHTML = '<div class="params-saves-empty">No saved backgrounds yet</div>';
+            return;
+        }
+
+        listEl.innerHTML = '';
+        presets.forEach(preset => {
+            const row = document.createElement('div');
+            row.className = 'params-save-item';
+
+            const low = (preset.params && preset.params.colorLow) || '#000000';
+            const high = (preset.params && preset.params.colorHigh) || '#ffffff';
+            const safeName = (preset.name || 'Background')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            row.innerHTML = `
+                <span class="params-save-swatch" style="background: linear-gradient(135deg, ${low} 50%, ${high} 50%);"></span>
+                <span class="params-save-name" title="${safeName}">${safeName}</span>
+                <div class="params-save-actions">
+                    <button type="button" class="params-save-load-btn" title="Apply this background">Load</button>
+                    <button type="button" class="params-save-del-btn" title="Delete preset">×</button>
+                </div>
+            `;
+
+            row.querySelector('.params-save-load-btn').addEventListener('click', () => {
+                this.applyPreset(preset.id);
+            });
+            row.querySelector('.params-save-del-btn').addEventListener('click', () => {
+                this.deletePreset(preset.id);
+            });
+
+            listEl.appendChild(row);
         });
     }
 
@@ -234,6 +448,7 @@ class ParamsManager {
         this.config.colorLow = this.defaults.colorLow;
         this.config.colorHigh = this.defaults.colorHigh;
 
+        this.saveCurrentParams();
         this.syncFromConfig();
     }
 

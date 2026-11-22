@@ -78,10 +78,6 @@ class ExportManager {
                                 <input type="text" id="export-filename-input" class="export-text-input" placeholder="Board name..." maxlength="50" autocomplete="off" spellcheck="false">
                             </div>
                             <div class="export-options-row">
-                                <label class="export-checkbox-label">
-                                    <input type="checkbox" id="export-include-noise" checked>
-                                    <span>Include Noise Settings</span>
-                                </label>
                                 <span id="export-current-summary" class="export-summary-badge">0 universes</span>
                             </div>
                             <div class="export-buttons-row">
@@ -175,8 +171,6 @@ class ExportManager {
                                     <span id="preview-universes-count">0 universes</span>
                                     <span>•</span>
                                     <span id="preview-connections-count">0 connections</span>
-                                    <span>•</span>
-                                    <span id="preview-noise-status">With noise settings</span>
                                 </div>
                             </div>
                             <div class="preview-actions-row">
@@ -215,21 +209,18 @@ class ExportManager {
         const btnDownloadCurrent = body.querySelector('#btn-export-download-current');
         const btnCopyCurrent = body.querySelector('#btn-export-copy-current');
         const nameInput = body.querySelector('#export-filename-input');
-        const noiseCheckbox = body.querySelector('#export-include-noise');
 
         if (btnDownloadCurrent) {
             btnDownloadCurrent.addEventListener('click', () => {
                 const name = nameInput.value.trim() || this.getCurrentBoardDefaultName();
-                const includeNoise = noiseCheckbox.checked;
-                this.exportCurrentBoard(name, includeNoise);
+                this.exportCurrentBoard(name);
             });
         }
 
         if (btnCopyCurrent) {
             btnCopyCurrent.addEventListener('click', () => {
                 const name = nameInput.value.trim() || this.getCurrentBoardDefaultName();
-                const includeNoise = noiseCheckbox.checked;
-                this.copyCurrentBoardJSON(name, includeNoise);
+                this.copyCurrentBoardJSON(name);
             });
         }
 
@@ -429,9 +420,9 @@ class ExportManager {
     }
 
     /**
-     * Packages current board state into standard JSON export object.
+     * Packages current board state into standard JSON export object (without noise parameters).
      */
-    serializeCurrentBoard(boardName, includeNoise = true) {
+    serializeCurrentBoard(boardName) {
         const bubbles = this.bubbleManager.bubbles.map(b => ({
             id: b.id,
             name: b.name,
@@ -454,17 +445,6 @@ class ExportManager {
         const comments = this.commentManager ? this.commentManager.serializeComments() : [];
         const commentLinks = this.commentManager ? this.commentManager.serializeCommentLinks() : [];
 
-        const noiseData = (includeNoise && this.noiseConfig) ? {
-            noiseSize: this.noiseConfig.noiseSize,
-            noiseSpeed: this.noiseConfig.noiseSpeed,
-            steps: this.noiseConfig.steps,
-            octaves: this.noiseConfig.octaves,
-            invert: !!this.noiseConfig.invert,
-            maintainAspectRatio: !!this.noiseConfig.maintainAspectRatio,
-            colorLow: this.noiseConfig.colorLow || '#000000',
-            colorHigh: this.noiseConfig.colorHigh || '#ffffff'
-        } : null;
-
         return {
             app: this.config.appSignature || 'InBetween Mapping',
             version: this.config.schemaVersion || '1.0',
@@ -477,8 +457,7 @@ class ExportManager {
                 bubbles,
                 connections,
                 comments,
-                commentLinks,
-                noiseConfig: noiseData
+                commentLinks
             }
         };
     }
@@ -486,8 +465,8 @@ class ExportManager {
     /**
      * Download current canvas board as a JSON file.
      */
-    exportCurrentBoard(boardName, includeNoise = true) {
-        const payload = this.serializeCurrentBoard(boardName, includeNoise);
+    exportCurrentBoard(boardName) {
+        const payload = this.serializeCurrentBoard(boardName);
         const filename = this.formatFilename(payload.board.name);
         this.downloadJSON(payload, filename);
         this.showFeedback(`Exported "${payload.board.name}" as ${filename}`, 'success');
@@ -496,8 +475,8 @@ class ExportManager {
     /**
      * Copy current board JSON directly to clipboard.
      */
-    copyCurrentBoardJSON(boardName, includeNoise = true) {
-        const payload = this.serializeCurrentBoard(boardName, includeNoise);
+    copyCurrentBoardJSON(boardName) {
+        const payload = this.serializeCurrentBoard(boardName);
         const jsonStr = JSON.stringify(payload, null, 2);
 
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -513,7 +492,7 @@ class ExportManager {
     }
 
     /**
-     * Export a saved board record by object.
+     * Export a saved board record by object (without noise parameters).
      */
     exportSavedBoardRecord(record) {
         if (!record) return;
@@ -530,8 +509,7 @@ class ExportManager {
                 bubbles: record.bubbles || [],
                 connections: record.connections || [],
                 comments: record.comments || [],
-                commentLinks: record.commentLinks || [],
-                noiseConfig: record.noiseConfig || null
+                commentLinks: record.commentLinks || []
             }
         };
 
@@ -541,7 +519,7 @@ class ExportManager {
     }
 
     /**
-     * Full workspace backup of all saved boards in a single bundle file.
+     * Full workspace backup of all saved boards in a single bundle file (without noise parameters).
      */
     exportAllBoards() {
         if (!this.savingManager) return;
@@ -551,13 +529,23 @@ class ExportManager {
             return;
         }
 
+        const sanitizedBoards = saves.map(rec => ({
+            id: rec.id,
+            name: rec.name,
+            createdAt: rec.createdAt || Date.now(),
+            bubbles: rec.bubbles || [],
+            connections: rec.connections || [],
+            comments: rec.comments || [],
+            commentLinks: rec.commentLinks || []
+        }));
+
         const payload = {
             app: this.config.appSignature || 'InBetween Mapping',
             version: this.config.schemaVersion || '1.0',
             type: 'bundle',
             exportedAt: new Date().toISOString(),
-            totalBoards: saves.length,
-            boards: saves
+            totalBoards: sanitizedBoards.length,
+            boards: sanitizedBoards
         };
 
         const dateStr = new Date().toISOString().split('T')[0];
@@ -722,7 +710,6 @@ class ExportManager {
         const titleEl = card.querySelector('#preview-board-name');
         const universesEl = card.querySelector('#preview-universes-count');
         const connectionsEl = card.querySelector('#preview-connections-count');
-        const noiseStatusEl = card.querySelector('#preview-noise-status');
         const typeBadge = card.querySelector('#preview-type-badge');
         const btnLoadNow = card.querySelector('#btn-import-load-now');
         const btnSaveList = card.querySelector('#btn-import-save-list');
@@ -733,7 +720,6 @@ class ExportManager {
             titleEl.textContent = `${validated.total} Boards in Archive`;
             universesEl.textContent = `${validated.total} boards`;
             connectionsEl.textContent = 'Multiple archives';
-            noiseStatusEl.textContent = 'Noise settings included per board';
 
             // For bundles, disable single canvas load, enable Save to List
             if (btnLoadNow) btnLoadNow.style.display = 'none';
@@ -747,7 +733,6 @@ class ExportManager {
             titleEl.textContent = validated.name || 'Untitled Board';
             universesEl.textContent = `${validated.bubbles.length} ${validated.bubbles.length === 1 ? 'universe' : 'universes'}`;
             connectionsEl.textContent = `${validated.connections.length} ${validated.connections.length === 1 ? 'connection' : 'connections'}`;
-            noiseStatusEl.textContent = validated.noiseConfig ? 'With noise settings' : 'Default noise';
 
             if (btnLoadNow) {
                 btnLoadNow.style.display = 'inline-flex';
@@ -839,15 +824,7 @@ class ExportManager {
             }
         }
 
-        // 4. Restore noise parameters
-        if (data.noiseConfig && this.noiseConfig) {
-            Object.assign(this.noiseConfig, data.noiseConfig);
-            if (typeof this.onNoiseConfigLoaded === 'function') {
-                this.onNoiseConfigLoaded(this.noiseConfig);
-            }
-        }
-
-        // 5. Update bottom-left indicator and session
+        // 4. Update bottom-left indicator and session (background noise params stay independent)
         if (this.savingManager) {
             const boardId = customBoardId || `board_${Date.now()}_imported`;
             this.savingManager.setActiveBoard(boardId, data.name);

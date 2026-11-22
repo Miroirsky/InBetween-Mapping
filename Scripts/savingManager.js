@@ -379,14 +379,7 @@ class SavingManager {
                         }
                     }
 
-                    if (session.noiseConfig && this.noiseConfig) {
-                        Object.assign(this.noiseConfig, session.noiseConfig);
-                        if (typeof this.onNoiseConfigLoaded === 'function') {
-                            this.onNoiseConfigLoaded(this.noiseConfig);
-                        }
-                    }
-
-                    // Restore active board name/id if associated
+                    // Restore active board name/id if associated (background params persist independently via ParamsManager)
                     const targetId = activeId || session.activeBoardId;
                     if (targetId) {
                         const savedRec = saves.find(s => s.id === targetId);
@@ -623,15 +616,7 @@ class SavingManager {
             }
         }
 
-        // 4. Restore noise settings if present
-        if (record.noiseConfig && this.noiseConfig) {
-            Object.assign(this.noiseConfig, record.noiseConfig);
-            if (typeof this.onNoiseConfigLoaded === 'function') {
-                this.onNoiseConfigLoaded(this.noiseConfig);
-            }
-        }
-
-        // 5. Update active board indicator on the bottom left
+        // 4. Update active board indicator on the bottom left (background params persist independently)
         this.setActiveBoard(record.id, record.name);
         this.saveSessionSnapshot();
 
