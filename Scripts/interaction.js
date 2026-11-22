@@ -551,6 +551,13 @@ class InteractionManager {
             const boardCoords = this.getBoardCoords(e.clientX, e.clientY);
 
             // 0. Check if right-clicked on a comment or comment connection line
+            const commentLinkEl = e.target.closest('.comment-to-comment-connection');
+            if (commentLinkEl && this.commentManager) {
+                const linkId = Number(commentLinkEl.dataset.linkId);
+                this.contextMenu.showCommentLinkMenu(e.clientX, e.clientY, linkId);
+                return;
+            }
+
             const commentConnEl = e.target.closest('.comment-connection');
             if (commentConnEl && this.commentManager) {
                 const commentId = Number(commentConnEl.dataset.commentId);
@@ -911,10 +918,11 @@ class InteractionManager {
                 return;
             }
 
-            // 2.5 Handle dragging a comment connection dot to attach to a bubble
+            // 2.5 Handle dragging a comment connection dot to connect to a bubble or another comment
             if (this.commentManager && this.commentManager.connectingState) {
-                const targetBubble = this.commentManager.getBubbleAtPoint(boardCoords.x, boardCoords.y);
-                this.commentManager.updateConnectionPreview(boardCoords.x, boardCoords.y, targetBubble);
+                const sourceId = this.commentManager.connectingState.comment.id;
+                const targetInfo = this.commentManager.getConnectionTargetAtPoint(boardCoords.x, boardCoords.y, sourceId);
+                this.commentManager.updateConnectionPreview(boardCoords.x, boardCoords.y, targetInfo);
                 return;
             }
 
@@ -1104,10 +1112,14 @@ class InteractionManager {
             if (this.commentManager && this.commentManager.connectingState) {
                 const boardCoords = this.getBoardCoords(e.clientX, e.clientY);
                 const commentId = this.commentManager.connectingState.comment.id;
-                const targetBubble = this.commentManager.getBubbleAtPoint(boardCoords.x, boardCoords.y);
+                const targetInfo = this.commentManager.getConnectionTargetAtPoint(boardCoords.x, boardCoords.y, commentId);
                 this.commentManager.endConnectionDrag();
-                if (targetBubble) {
-                    this.commentManager.attachCommentToBubble(commentId, targetBubble.id);
+                if (targetInfo) {
+                    if (targetInfo.type === 'comment') {
+                        this.commentManager.connectComments(commentId, targetInfo.target.id);
+                    } else if (targetInfo.type === 'bubble') {
+                        this.commentManager.attachCommentToBubble(commentId, targetInfo.target.id);
+                    }
                 }
             }
 

@@ -294,6 +294,7 @@ class SavingManager {
             }));
 
         const comments = this.commentManager ? this.commentManager.serializeComments() : [];
+        const commentLinks = this.commentManager ? this.commentManager.serializeCommentLinks() : [];
 
         const noiseData = this.noiseConfig ? {
             noiseSize: this.noiseConfig.noiseSize,
@@ -301,10 +302,12 @@ class SavingManager {
             steps: this.noiseConfig.steps,
             octaves: this.noiseConfig.octaves,
             invert: !!this.noiseConfig.invert,
-            maintainAspectRatio: !!this.noiseConfig.maintainAspectRatio
+            maintainAspectRatio: !!this.noiseConfig.maintainAspectRatio,
+            colorLow: this.noiseConfig.colorLow || '#000000',
+            colorHigh: this.noiseConfig.colorHigh || '#ffffff'
         } : null;
 
-        return { bubbles, connections, comments, noiseData };
+        return { bubbles, connections, comments, commentLinks, noiseData };
     }
 
     /**
@@ -316,7 +319,7 @@ class SavingManager {
             return;
         }
 
-        const { bubbles, connections, comments, noiseData } = this.serializeCurrentState();
+        const { bubbles, connections, comments, commentLinks, noiseData } = this.serializeCurrentState();
         const sessionData = {
             activeBoardId: this.activeBoardId,
             activeBoardName: this.activeBoardName,
@@ -324,6 +327,7 @@ class SavingManager {
             bubbles,
             connections,
             comments,
+            commentLinks,
             noiseConfig: noiseData
         };
 
@@ -370,6 +374,9 @@ class SavingManager {
 
                     if (this.commentManager && Array.isArray(session.comments)) {
                         this.commentManager.loadComments(session.comments);
+                        if (Array.isArray(session.commentLinks)) {
+                            this.commentManager.loadCommentLinks(session.commentLinks);
+                        }
                     }
 
                     if (session.noiseConfig && this.noiseConfig) {
@@ -472,7 +479,7 @@ class SavingManager {
             return true;
         }
 
-        const { bubbles, connections, comments, noiseData } = this.serializeCurrentState();
+        const { bubbles, connections, comments, commentLinks, noiseData } = this.serializeCurrentState();
 
         if (this.activeBoardId) {
             const saves = this.getAllSaves();
@@ -482,6 +489,7 @@ class SavingManager {
                 record.bubbles = bubbles;
                 record.connections = connections;
                 record.comments = comments;
+                record.commentLinks = commentLinks;
                 record.noiseConfig = noiseData;
                 record.updatedAt = Date.now();
 
@@ -558,7 +566,7 @@ class SavingManager {
     }
 
     saveCurrentBoard(name) {
-        const { bubbles, connections, comments, noiseData } = this.serializeCurrentState();
+        const { bubbles, connections, comments, commentLinks, noiseData } = this.serializeCurrentState();
 
         const boardRecord = {
             id: `board_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -567,6 +575,7 @@ class SavingManager {
             bubbles,
             connections,
             comments,
+            commentLinks,
             noiseConfig: noiseData
         };
 
@@ -609,6 +618,9 @@ class SavingManager {
         // 3.5 Recreate comments
         if (this.commentManager && Array.isArray(record.comments)) {
             this.commentManager.loadComments(record.comments);
+            if (Array.isArray(record.commentLinks)) {
+                this.commentManager.loadCommentLinks(record.commentLinks);
+            }
         }
 
         // 4. Restore noise settings if present

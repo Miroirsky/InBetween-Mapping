@@ -1144,6 +1144,22 @@ class ContextMenu {
             });
         }
 
+        const linkedComments = this.commentManager.getCommentLinksForComment(commentId);
+        if (linkedComments.length > 0) {
+            items.push({
+                label: linkedComments.length === 1 ? 'Disconnect Comment' : `Disconnect Comments (${linkedComments.length})`,
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                `,
+                action: () => {
+                    this.commentManager.removeCommentLinksForComment(commentId);
+                }
+            });
+        }
+
         items.push({
             label: 'Remove Comment',
             danger: true,
@@ -1187,6 +1203,33 @@ class ContextMenu {
         ];
 
         this.renderMenu('Comment Attachment', items, x, y);
+    }
+
+    /**
+     * Show menu for comment-to-comment connection line right-click
+     */
+    showCommentLinkMenu(x, y, linkId) {
+        if (!this.commentManager) return;
+        const link = this.commentManager.getCommentLinkById(linkId);
+        if (!link) return;
+
+        const items = [
+            {
+                label: 'Remove Connection',
+                danger: true,
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                `,
+                action: () => {
+                    this.commentManager.removeCommentLink(linkId);
+                }
+            }
+        ];
+
+        this.renderMenu('Comment Connection', items, x, y);
     }
 
     renderMenu(title, items, x, y) {

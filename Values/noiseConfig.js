@@ -50,7 +50,15 @@ const NoiseConfig = {
      * Maintain Square Aspect Ratio
      * Keeps noise features proportional without stretching when window resizes.
      */
-    maintainAspectRatio: true
+    maintainAspectRatio: true,
+
+    /**
+     * Background Noise Colors (Gradient from low noise values to high noise values)
+     * - colorLow: color for dark/low noise bands (default pure black)
+     * - colorHigh: color for light/high noise bands (default pure white)
+     */
+    colorLow: '#000000',
+    colorHigh: '#ffffff'
 };
 
 // Expose to window for global browser access without bundling required

@@ -70,7 +70,9 @@ class NoiseRenderer {
             invert: gl.getUniformLocation(this.program, 'u_invert'),
             aspect: gl.getUniformLocation(this.program, 'u_aspect'),
             pan: gl.getUniformLocation(this.program, 'u_pan'),
-            zoom: gl.getUniformLocation(this.program, 'u_zoom')
+            zoom: gl.getUniformLocation(this.program, 'u_zoom'),
+            colorLow: gl.getUniformLocation(this.program, 'u_colorLow'),
+            colorHigh: gl.getUniformLocation(this.program, 'u_colorHigh')
         };
 
         this.panX = 0;
@@ -127,6 +129,25 @@ class NoiseRenderer {
     }
 
     /**
+     * Converts a hex color string (e.g. "#1e293b") into normalized [r, g, b] in [0, 1].
+     */
+    hexToRgbNorm(hex, fallback) {
+        if (!hex || typeof hex !== 'string') return fallback;
+        let c = hex.replace('#', '').trim();
+        if (c.length === 3) {
+            c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+        }
+        if (c.length !== 6) return fallback;
+        const num = parseInt(c, 16);
+        if (isNaN(num)) return fallback;
+        return [
+            ((num >> 16) & 255) / 255,
+            ((num >> 8) & 255) / 255,
+            (num & 255) / 255
+        ];
+    }
+
+    /**
      * Main animation render step
      */
     render() {
@@ -136,6 +157,9 @@ class NoiseRenderer {
         const elapsedTime = (performance.now() - this.startTime) / 1000.0;
 
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+        const lowRgb = this.hexToRgbNorm(cfg.colorLow, [0.0, 0.0, 0.0]);
+        const highRgb = this.hexToRgbNorm(cfg.colorHigh, [1.0, 1.0, 1.0]);
 
         // Pass uniform values from NoiseConfig
         gl.uniform2f(this.uniforms.resolution, this.canvas.width, this.canvas.height);
@@ -148,6 +172,8 @@ class NoiseRenderer {
         gl.uniform1i(this.uniforms.aspect, cfg.maintainAspectRatio ? 1 : 0);
         gl.uniform2f(this.uniforms.pan, this.panX * dpr, this.panY * dpr);
         gl.uniform1f(this.uniforms.zoom, this.zoom);
+        gl.uniform3f(this.uniforms.colorLow, lowRgb[0], lowRgb[1], lowRgb[2]);
+        gl.uniform3f(this.uniforms.colorHigh, highRgb[0], highRgb[1], highRgb[2]);
 
         // Draw quad
         gl.drawArrays(gl.TRIANGLES, 0, 6);

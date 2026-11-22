@@ -17,7 +17,9 @@ class ParamsManager {
             steps: 15,
             octaves: 2,
             invert: false,
-            maintainAspectRatio: true
+            maintainAspectRatio: true,
+            colorLow: '#000000',
+            colorHigh: '#ffffff'
         };
 
         this.window = null;
@@ -73,6 +75,32 @@ class ParamsManager {
                             <span id="val-display-octaves" class="value-display">100% (2)</span>
                         </div>
                         <input type="range" id="param-octaves" min="${minPct}" max="${maxPct}" step="${stepPct}" value="100">
+                    </div>
+
+                    <!-- Noise Colors -->
+                    <div class="control-group noise-colors-group">
+                        <div class="label-row">
+                            <label>Noise Colors</label>
+                            <span class="value-display">Low / High</span>
+                        </div>
+                        <div class="noise-color-pickers-row">
+                            <label class="noise-color-item" title="Low / dark noise color">
+                                <input type="color" id="param-color-low" class="noise-color-input" value="${this.config.colorLow || '#000000'}">
+                                <span id="val-display-color-low" class="noise-color-hex">${(this.config.colorLow || '#000000').toUpperCase()}</span>
+                            </label>
+                            <label class="noise-color-item" title="High / light noise color">
+                                <input type="color" id="param-color-high" class="noise-color-input" value="${this.config.colorHigh || '#ffffff'}">
+                                <span id="val-display-color-high" class="noise-color-hex">${(this.config.colorHigh || '#ffffff').toUpperCase()}</span>
+                            </label>
+                        </div>
+                        <div class="noise-color-presets">
+                            <button type="button" class="noise-preset-btn" data-low="#000000" data-high="#ffffff" title="Classic B&amp;W" style="background: linear-gradient(135deg, #000000 50%, #ffffff 50%);"></button>
+                            <button type="button" class="noise-preset-btn" data-low="#0a1628" data-high="#38bdf8" title="Deep Ocean" style="background: linear-gradient(135deg, #0a1628 50%, #38bdf8 50%);"></button>
+                            <button type="button" class="noise-preset-btn" data-low="#1a0b2e" data-high="#c084fc" title="Cosmic Violet" style="background: linear-gradient(135deg, #1a0b2e 50%, #c084fc 50%);"></button>
+                            <button type="button" class="noise-preset-btn" data-low="#052e16" data-high="#4ade80" title="Forest Mist" style="background: linear-gradient(135deg, #052e16 50%, #4ade80 50%);"></button>
+                            <button type="button" class="noise-preset-btn" data-low="#270909" data-high="#fb923c" title="Ember Glow" style="background: linear-gradient(135deg, #270909 50%, #fb923c 50%);"></button>
+                            <button type="button" class="noise-preset-btn" data-low="#1c1917" data-high="#e7d3b0" title="Warm Sepia" style="background: linear-gradient(135deg, #1c1917 50%, #e7d3b0 50%);"></button>
+                        </div>
                     </div>
 
                     <!-- Toggles -->
@@ -144,6 +172,37 @@ class ParamsManager {
             octavesDisplay.textContent = `${Math.round(pct)}% (${val})`;
         });
 
+        // Noise Colors
+        const colorLowInput = body.querySelector('#param-color-low');
+        const colorLowHex = body.querySelector('#val-display-color-low');
+        const colorHighInput = body.querySelector('#param-color-high');
+        const colorHighHex = body.querySelector('#val-display-color-high');
+
+        if (colorLowInput) {
+            colorLowInput.addEventListener('input', (e) => {
+                this.config.colorLow = e.target.value;
+                if (colorLowHex) colorLowHex.textContent = e.target.value.toUpperCase();
+            });
+        }
+
+        if (colorHighInput) {
+            colorHighInput.addEventListener('input', (e) => {
+                this.config.colorHigh = e.target.value;
+                if (colorHighHex) colorHighHex.textContent = e.target.value.toUpperCase();
+            });
+        }
+
+        const presetBtns = body.querySelectorAll('.noise-preset-btn');
+        presetBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const low = btn.dataset.low || '#000000';
+                const high = btn.dataset.high || '#ffffff';
+                this.config.colorLow = low;
+                this.config.colorHigh = high;
+                this.syncFromConfig();
+            });
+        });
+
         // Checkboxes
         const invertInput = body.querySelector('#param-invert');
         invertInput.addEventListener('change', (e) => {
@@ -172,6 +231,8 @@ class ParamsManager {
         this.config.octaves = this.defaults.octaves;
         this.config.invert = this.defaults.invert;
         this.config.maintainAspectRatio = this.defaults.maintainAspectRatio;
+        this.config.colorLow = this.defaults.colorLow;
+        this.config.colorHigh = this.defaults.colorHigh;
 
         this.syncFromConfig();
     }
@@ -226,10 +287,40 @@ class ParamsManager {
         if (aspectInput) {
             aspectInput.checked = !!this.config.maintainAspectRatio;
         }
+
+        const colorLow = this.config.colorLow || this.defaults.colorLow;
+        const colorHigh = this.config.colorHigh || this.defaults.colorHigh;
+
+        const colorLowInput = body.querySelector('#param-color-low');
+        const colorLowHex = body.querySelector('#val-display-color-low');
+        if (colorLowInput) colorLowInput.value = colorLow;
+        if (colorLowHex) colorLowHex.textContent = colorLow.toUpperCase();
+
+        const colorHighInput = body.querySelector('#param-color-high');
+        const colorHighHex = body.querySelector('#val-display-color-high');
+        if (colorHighInput) colorHighInput.value = colorHigh;
+        if (colorHighHex) colorHighHex.textContent = colorHigh.toUpperCase();
     }
 
     bindKeyboardShortcut() {
         window.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+            // Never toggle the params window while typing in inputs, textareas, or open modals
+            const target = e.target;
+            if (target) {
+                const tag = target.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) {
+                    return;
+                }
+                if (typeof target.closest === 'function' && target.closest('.custom-input-modal-backdrop.visible')) {
+                    return;
+                }
+            }
+            if (document.querySelector('.custom-input-modal-backdrop.visible')) {
+                return;
+            }
+
             if (e.key === 'h' || e.key === 'H') {
                 this.toggle();
             }

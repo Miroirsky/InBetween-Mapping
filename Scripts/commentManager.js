@@ -17,10 +17,12 @@ class CommentManager {
 
         this.comments = [];
         this.nextId = 1;
+        this.commentLinks = []; // [{ id, fromCommentId, toCommentId }]
+        this.nextLinkId = 1;
 
         // Border hover & dot drag state
         this.hoveredBorderInfo = null; // { comment, edgeX, edgeY, localX, localY, side }
-        this.connectingState = null;   // { comment, startX, startY, targetBubble }
+        this.connectingState = null;   // { comment, startX, startY, targetInfo }
 
         this.initSVG();
     }
@@ -164,7 +166,7 @@ class CommentManager {
         const dotEl = document.createElement('div');
         dotEl.className = 'comment-connect-dot';
         dotEl.dataset.commentId = id;
-        dotEl.title = 'Drag to attach to a universe';
+        dotEl.title = 'Drag to connect to a universe or comment';
         el.appendChild(dotEl);
 
         const comment = {
@@ -359,6 +361,8 @@ class CommentManager {
         this.comments.splice(index, 1);
         this.syncNextId();
 
+        this.removeCommentLinksForComment(targetId, false);
+
         if (this.hoveredBorderInfo && this.hoveredBorderInfo.comment.id === targetId) {
             this.hoveredBorderInfo = null;
         }
@@ -391,6 +395,8 @@ class CommentManager {
         this.hoveredBorderInfo = null;
         this.comments = [];
         this.nextId = 1;
+        this.commentLinks = [];
+        this.nextLinkId = 1;
         if (this.container) {
             this.container.innerHTML = '';
         }
@@ -506,6 +512,104 @@ class CommentManager {
         if (changed) {
             this.renderConnections();
         }
+    }
+
+    /**
+     * Connects two comments with a visual link.
+     */
+    connectComments(fromCommentId, toCommentId, customId = null, saveSnapshot = true) {
+        const fromId = Number(fromCommentId);
+        const toId = Number(toCommentId);
+        if (!Number.isFinite(fromId) || !Number.isFinite(toId) || fromId === toId) return null;
+
+        const fromComment = this.getCommentById(fromId);
+        const toComment = this.getCommentById(toId);
+        if (!fromComment || !toComment) return null;
+
+        // Prevent duplicate link between the same pair of comments
+        const existing = this.commentLinks.find(
+            l => (l.fromCommentId === fromId && l.toCommentId === toId) ||
+                 (l.fromCommentId === toId && l.toCommentId === fromId)
+        );
+        if (existing) return existing;
+
+        this.syncNextLinkId();
+        const hasValidCustomId = customId !== null && customId !== undefined && Number.isFinite(Number(customId)) && Number(customId) > 0;
+        const id = hasValidCustomId ? Math.floor(Number(customId)) : this.nextLinkId;
+
+        const link = {
+            id,
+            fromCommentId: fromId,
+            toCommentId: toId
+        };
+
+        this.commentLinks.push(link);
+        this.syncNextLinkId();
+        this.renderConnections();
+
+        if (saveSnapshot && this.savingManager) {
+            this.savingManager.saveSessionSnapshot();
+        }
+        return link;
+    }
+
+    syncNextLinkId() {
+        let maxId = 0;
+        for (const l of this.commentLinks) {
+            const num = Number(l.id);
+            if (Number.isFinite(num) && num > maxId) {
+                maxId = Math.floor(num);
+            }
+        }
+        this.nextLinkId = maxId + 1;
+        return this.nextLinkId;
+    }
+
+    getCommentLinkById(linkId) {
+        const numId = Number(linkId);
+        if (!Number.isFinite(numId)) return undefined;
+        return this.commentLinks.find(l => l.id === numId);
+    }
+
+    getCommentLinksForComment(commentId) {
+        const targetId = Number(commentId);
+        return this.commentLinks.filter(l => l.fromCommentId === targetId || l.toCommentId === targetId);
+    }
+
+    /**
+     * Removes a single comment-to-comment connection.
+     */
+    removeCommentLink(linkId, saveSnapshot = true) {
+        const targetId = Number(linkId);
+        const index = this.commentLinks.findIndex(l => l.id === targetId);
+        if (index === -1) return false;
+
+        this.commentLinks.splice(index, 1);
+        this.syncNextLinkId();
+        this.renderConnections();
+
+        if (saveSnapshot && this.savingManager) {
+            this.savingManager.saveSessionSnapshot();
+        }
+        return true;
+    }
+
+    /**
+     * Removes all comment-to-comment links connected to a specific comment.
+     */
+    removeCommentLinksForComment(commentId, saveSnapshot = true) {
+        const targetId = Number(commentId);
+        const before = this.commentLinks.length;
+        this.commentLinks = this.commentLinks.filter(l => l.fromCommentId !== targetId && l.toCommentId !== targetId);
+        if (this.commentLinks.length !== before) {
+            this.syncNextLinkId();
+            this.renderConnections();
+            if (saveSnapshot && this.savingManager) {
+                this.savingManager.saveSessionSnapshot();
+            }
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -690,7 +794,7 @@ class CommentManager {
             comment,
             startX,
             startY,
-            targetBubble: null
+            targetInfo: null // { type: 'bubble' | 'comment', target }
         };
 
         if (comment.dotElement) {
@@ -705,19 +809,20 @@ class CommentManager {
 
     /**
      * Updates the live SVG preview line while dragging a comment connection dot.
+     * Supports both bubble targets and other comment targets.
      */
-    updateConnectionPreview(targetX, targetY, hoveredBubble = null) {
+    updateConnectionPreview(targetX, targetY, hoveredTargetInfo = null) {
         if (!this.connectingState || !this.previewGroup) return;
 
-        // Update drop-target highlight on bubbles
-        if (this.connectingState.targetBubble && this.connectingState.targetBubble !== hoveredBubble) {
-            if (this.connectingState.targetBubble.element) {
-                this.connectingState.targetBubble.element.classList.remove('is-comment-drop-target');
-            }
+        // Update drop-target highlight on previous target (bubble or comment)
+        const prevTarget = this.connectingState.targetInfo ? this.connectingState.targetInfo.target : null;
+        const nextTarget = hoveredTargetInfo ? hoveredTargetInfo.target : null;
+        if (prevTarget && prevTarget !== nextTarget && prevTarget.element) {
+            prevTarget.element.classList.remove('is-comment-drop-target');
         }
-        this.connectingState.targetBubble = hoveredBubble;
-        if (hoveredBubble && hoveredBubble.element) {
-            hoveredBubble.element.classList.add('is-comment-drop-target');
+        this.connectingState.targetInfo = hoveredTargetInfo;
+        if (nextTarget && nextTarget.element) {
+            nextTarget.element.classList.add('is-comment-drop-target');
         }
 
         const { comment, startX, startY } = this.connectingState;
@@ -725,8 +830,8 @@ class CommentManager {
 
         let endX = targetX;
         let endY = targetY;
-        if (hoveredBubble) {
-            // Snap preview line endpoint to the bubble perimeter
+        if (hoveredTargetInfo && hoveredTargetInfo.type === 'bubble') {
+            const hoveredBubble = hoveredTargetInfo.target;
             const r = typeof this.bubbleManager.getBubbleRadius === 'function'
                 ? this.bubbleManager.getBubbleRadius(hoveredBubble)
                 : this.bubbleManager.currentRadius;
@@ -740,8 +845,14 @@ class CommentManager {
                 endX = hoveredBubble.x;
                 endY = hoveredBubble.y;
             }
+        } else if (hoveredTargetInfo && hoveredTargetInfo.type === 'comment') {
+            const targetRect = this.getCommentRect(hoveredTargetInfo.target);
+            const edgePt = this.getRectEdgeIntersection(targetRect, startX, startY);
+            endX = edgePt.x;
+            endY = edgePt.y;
         }
 
+        const hasTarget = !!hoveredTargetInfo;
         const svgNS = 'http://www.w3.org/2000/svg';
         this.previewGroup.innerHTML = '';
 
@@ -763,7 +874,7 @@ class CommentManager {
         line.setAttribute('y1', startY);
         line.setAttribute('x2', endX);
         line.setAttribute('y2', endY);
-        line.setAttribute('stroke', hoveredBubble ? '#38bdf8' : accentColor);
+        line.setAttribute('stroke', hasTarget ? '#38bdf8' : accentColor);
         line.setAttribute('stroke-width', '2.5');
         line.setAttribute('stroke-dasharray', '6 4');
         line.setAttribute('stroke-linecap', 'round');
@@ -773,8 +884,8 @@ class CommentManager {
         const tip = document.createElementNS(svgNS, 'circle');
         tip.setAttribute('cx', endX);
         tip.setAttribute('cy', endY);
-        tip.setAttribute('r', hoveredBubble ? '6' : '4.5');
-        tip.setAttribute('fill', hoveredBubble ? '#38bdf8' : accentColor);
+        tip.setAttribute('r', hasTarget ? '6' : '4.5');
+        tip.setAttribute('fill', hasTarget ? '#38bdf8' : accentColor);
         tip.setAttribute('stroke', '#ffffff');
         tip.setAttribute('stroke-width', '1.8');
         this.previewGroup.appendChild(tip);
@@ -786,15 +897,15 @@ class CommentManager {
     endConnectionDrag() {
         if (!this.connectingState) return;
 
-        const { comment, targetBubble } = this.connectingState;
+        const { comment, targetInfo } = this.connectingState;
         if (comment && comment.dotElement) {
             comment.dotElement.classList.remove('is-visible', 'is-dragging-dot');
         }
         if (comment && comment.element) {
             comment.element.classList.remove('is-connecting', 'is-border-hovered');
         }
-        if (targetBubble && targetBubble.element) {
-            targetBubble.element.classList.remove('is-comment-drop-target');
+        if (targetInfo && targetInfo.target && targetInfo.target.element) {
+            targetInfo.target.element.classList.remove('is-comment-drop-target');
         }
 
         if (this.previewGroup) {
@@ -804,6 +915,27 @@ class CommentManager {
         this.connectingState = null;
         this.hoveredBorderInfo = null;
         document.body.classList.remove('is-connecting-comment');
+    }
+
+    /**
+     * Finds the comment under board coordinates (boardX, boardY), excluding a given comment ID.
+     */
+    getCommentAtPoint(boardX, boardY, excludeId = null) {
+        const pad = 6;
+        for (let i = this.comments.length - 1; i >= 0; i--) {
+            const c = this.comments[i];
+            if (excludeId !== null && c.id === Number(excludeId)) continue;
+            const rect = this.getCommentRect(c);
+            if (
+                boardX >= rect.left - pad &&
+                boardX <= rect.right + pad &&
+                boardY >= rect.top - pad &&
+                boardY <= rect.bottom + pad
+            ) {
+                return c;
+            }
+        }
+        return null;
     }
 
     /**
@@ -819,6 +951,21 @@ class CommentManager {
             if (Math.hypot(boardX - b.x, boardY - b.y) <= r + 6) {
                 return b;
             }
+        }
+        return null;
+    }
+
+    /**
+     * Finds a valid connection target (comment first, then bubble) under (boardX, boardY).
+     */
+    getConnectionTargetAtPoint(boardX, boardY, excludeCommentId = null) {
+        const targetComment = this.getCommentAtPoint(boardX, boardY, excludeCommentId);
+        if (targetComment) {
+            return { type: 'comment', target: targetComment };
+        }
+        const targetBubble = this.getBubbleAtPoint(boardX, boardY);
+        if (targetBubble) {
+            return { type: 'bubble', target: targetBubble };
         }
         return null;
     }
@@ -946,6 +1093,117 @@ class CommentManager {
 
             this.connectionsGroup.appendChild(group);
         }
+
+        // 2. Render comment-to-comment connections
+        for (const link of this.commentLinks) {
+            const fromComment = this.getCommentById(link.fromCommentId);
+            const toComment = this.getCommentById(link.toCommentId);
+            if (!fromComment || !toComment) continue;
+
+            const fromRect = this.getCommentRect(fromComment);
+            const toRect = this.getCommentRect(toComment);
+
+            const dx = toRect.cx - fromRect.cx;
+            const dy = toRect.cy - fromRect.cy;
+            const centerDist = Math.hypot(dx, dy);
+            if (centerDist < 1) continue;
+
+            const startPt = this.getRectEdgeIntersection(fromRect, toRect.cx, toRect.cy);
+            const endPt = this.getRectEdgeIntersection(toRect, fromRect.cx, fromRect.cy);
+
+            const startDist = Math.hypot(startPt.x - fromRect.cx, startPt.y - fromRect.cy);
+            const endDist = Math.hypot(endPt.x - toRect.cx, endPt.y - toRect.cy);
+            if (centerDist <= startDist + endDist) continue;
+
+            const fromColor = fromComment.color || this.config.defaultColor || '#f59e0b';
+            const toColor = toComment.color || this.config.defaultColor || '#f59e0b';
+
+            const group = document.createElementNS(svgNS, 'g');
+            group.setAttribute('class', 'comment-connection comment-to-comment-connection');
+            group.dataset.linkId = link.id;
+
+            const hitbox = document.createElementNS(svgNS, 'line');
+            hitbox.setAttribute('class', 'comment-conn-hitbox');
+            hitbox.setAttribute('x1', startPt.x);
+            hitbox.setAttribute('y1', startPt.y);
+            hitbox.setAttribute('x2', endPt.x);
+            hitbox.setAttribute('y2', endPt.y);
+            hitbox.setAttribute('stroke', 'transparent');
+            hitbox.setAttribute('stroke-width', '14');
+            group.appendChild(hitbox);
+
+            const outline = document.createElementNS(svgNS, 'line');
+            outline.setAttribute('class', 'comment-conn-outline');
+            outline.setAttribute('x1', startPt.x);
+            outline.setAttribute('y1', startPt.y);
+            outline.setAttribute('x2', endPt.x);
+            outline.setAttribute('y2', endPt.y);
+            outline.setAttribute('stroke', 'rgba(0, 0, 0, 0.72)');
+            outline.setAttribute('stroke-width', String(lineWidth + 2.2));
+            outline.setAttribute('stroke-linecap', 'round');
+            group.appendChild(outline);
+
+            const line = document.createElementNS(svgNS, 'line');
+            line.setAttribute('class', 'comment-conn-line');
+            line.setAttribute('x1', startPt.x);
+            line.setAttribute('y1', startPt.y);
+            line.setAttribute('x2', endPt.x);
+            line.setAttribute('y2', endPt.y);
+            line.setAttribute('stroke', fromColor);
+            line.setAttribute('stroke-width', String(lineWidth));
+            line.setAttribute('stroke-linecap', 'round');
+            group.appendChild(line);
+
+            const startDot = document.createElementNS(svgNS, 'circle');
+            startDot.setAttribute('class', 'comment-conn-dot');
+            startDot.setAttribute('cx', startPt.x);
+            startDot.setAttribute('cy', startPt.y);
+            startDot.setAttribute('r', String(anchorR));
+            startDot.setAttribute('fill', fromColor);
+            startDot.setAttribute('stroke', 'rgba(0, 0, 0, 0.75)');
+            startDot.setAttribute('stroke-width', '1.4');
+            group.appendChild(startDot);
+
+            const endDot = document.createElementNS(svgNS, 'circle');
+            endDot.setAttribute('class', 'comment-conn-dot');
+            endDot.setAttribute('cx', endPt.x);
+            endDot.setAttribute('cy', endPt.y);
+            endDot.setAttribute('r', String(anchorR));
+            endDot.setAttribute('fill', toColor);
+            endDot.setAttribute('stroke', 'rgba(0, 0, 0, 0.75)');
+            endDot.setAttribute('stroke-width', '1.4');
+            group.appendChild(endDot);
+
+            this.connectionsGroup.appendChild(group);
+        }
+    }
+
+    /**
+     * Serializes all comment-to-comment links for saving / exporting.
+     */
+    serializeCommentLinks() {
+        return this.commentLinks
+            .filter(l => l && Number.isFinite(Number(l.fromCommentId)) && Number.isFinite(Number(l.toCommentId)))
+            .map(l => ({
+                id: Math.floor(Number(l.id)),
+                fromCommentId: Math.floor(Number(l.fromCommentId)),
+                toCommentId: Math.floor(Number(l.toCommentId))
+            }));
+    }
+
+    /**
+     * Restores an array of serialized comment-to-comment links.
+     */
+    loadCommentLinks(linksArray) {
+        this.commentLinks = [];
+        this.nextLinkId = 1;
+        if (!Array.isArray(linksArray)) return;
+
+        linksArray.forEach(l => {
+            if (!l) return;
+            this.connectComments(l.fromCommentId, l.toCommentId, l.id || null, false);
+        });
+        this.renderConnections();
     }
 
     /**

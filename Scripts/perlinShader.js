@@ -26,6 +26,8 @@ const PerlinShader = {
         uniform bool  u_aspect;
         uniform vec2  u_pan;
         uniform float u_zoom;
+        uniform vec3  u_colorLow;
+        uniform vec3  u_colorHigh;
 
         // --- 3D Simplex Noise by Ian McEwan, Ashima Arts (Public Domain) ---
         vec4 permute(vec4 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
@@ -141,7 +143,8 @@ const PerlinShader = {
                 shade = 1.0 - shade;
             }
 
-            gl_FragColor = vec4(vec3(shade), 1.0);
+            vec3 finalColor = mix(u_colorLow, u_colorHigh, shade);
+            gl_FragColor = vec4(finalColor, 1.0);
         }
     `
 };
