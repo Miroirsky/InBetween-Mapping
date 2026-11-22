@@ -613,7 +613,53 @@ class CommentManager {
     }
 
     /**
-     * Syncs attached comments to follow their target bubbles' current positions.
+     * Moves all comments attached to `parentCommentId` (and recursively any comments attached to them)
+     * by (dx, dy), using a visited set to avoid cycles.
+     */
+    moveAttachedCommentChildren(parentCommentId, dx, dy) {
+        if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001) return false;
+        if (this.commentLinks.length === 0) return false;
+
+        const rootId = Number(parentCommentId);
+        const visited = new Set([rootId]);
+        const queue = [rootId];
+        let movedAny = false;
+
+        while (queue.length > 0) {
+            const currentId = queue.shift();
+            for (const link of this.commentLinks) {
+                if (link.toCommentId !== currentId) continue;
+                const childId = link.fromCommentId;
+                if (visited.has(childId)) continue;
+                visited.add(childId);
+
+                const child = this.getCommentById(childId);
+                if (!child || child.isDragging) continue;
+
+                child.x += dx;
+                child.y += dy;
+
+                // Keep bubble offset consistent if the child is also attached to a bubble
+                if (child.attachedBubbleId !== null && this.bubbleManager) {
+                    const b = this.bubbleManager.getBubbleById(child.attachedBubbleId);
+                    if (b) {
+                        child.offsetX = child.x - b.x;
+                        child.offsetY = child.y - b.y;
+                    }
+                }
+
+                this.updateElementPosition(child);
+                movedAny = true;
+                queue.push(childId);
+            }
+        }
+
+        return movedAny;
+    }
+
+    /**
+     * Syncs attached comments to follow their target bubbles' current positions,
+     * and propagates their movement to any comments attached to them.
      * Called every frame by the physics loop (comments themselves have no physics forces).
      */
     syncWithBubbles() {
@@ -639,10 +685,13 @@ class CommentManager {
             } else {
                 const targetX = bubble.x + comment.offsetX;
                 const targetY = bubble.y + comment.offsetY;
-                if (Math.abs(targetX - comment.x) > 0.01 || Math.abs(targetY - comment.y) > 0.01) {
+                const dx = targetX - comment.x;
+                const dy = targetY - comment.y;
+                if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
                     comment.x = targetX;
                     comment.y = targetY;
                     this.updateElementPosition(comment);
+                    this.moveAttachedCommentChildren(comment.id, dx, dy);
                 }
             }
         }

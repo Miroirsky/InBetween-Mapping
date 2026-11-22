@@ -933,8 +933,12 @@ class InteractionManager {
                     this.commentDragMoved = true;
                 }
                 if (this.commentDragMoved) {
+                    const prevX = c.x;
+                    const prevY = c.y;
                     c.x = boardCoords.x + this.commentDragOffsetX;
                     c.y = boardCoords.y + this.commentDragOffsetY;
+                    const dx = c.x - prevX;
+                    const dy = c.y - prevY;
                     if (c.attachedBubbleId !== null) {
                         const attachedBubble = this.manager.getBubbleById(c.attachedBubbleId);
                         if (attachedBubble) {
@@ -943,6 +947,7 @@ class InteractionManager {
                         }
                     }
                     this.commentManager.updateElementPosition(c);
+                    this.commentManager.moveAttachedCommentChildren(c.id, dx, dy);
                     this.commentManager.renderConnections();
                 }
                 return;
