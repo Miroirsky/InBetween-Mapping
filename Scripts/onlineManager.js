@@ -747,7 +747,7 @@ class OnlineManager {
                 this.connectionManager.render();
             }
 
-            // 3. Synchronize Comments
+            // 3. Synchronize Comments & Comment-to-Comment Links
             if (this.commentManager) {
                 const remoteCommentsMap = safeData.comments || {};
                 const validRemoteComments = [];
@@ -764,6 +764,24 @@ class OnlineManager {
                     remoteCommentIds.add(clean.id);
                 }
 
+                // Collect valid remote comment links first so we know which comments follow a parent comment
+                const remoteLinksMap = safeData.commentLinks || {};
+                const validRemoteLinks = [];
+                const remoteLinkIds = new Set();
+                const childCommentIdsWithParent = new Set();
+
+                for (const [key, rl] of Object.entries(remoteLinksMap)) {
+                    if (!rl || typeof rl !== 'object') continue;
+                    const clean = this.firebaseService.sanitizeCommentLink(rl, key);
+                    if (!clean || key === 'NaN' || key === 'undefined') {
+                        this.firebaseService.removeCommentLink(this.roomId, key);
+                        continue;
+                    }
+                    validRemoteLinks.push(clean);
+                    remoteLinkIds.add(clean.id);
+                    childCommentIdsWithParent.add(clean.fromCommentId);
+                }
+
                 validRemoteComments.forEach(rc => {
                     const id = rc.id;
                     const local = this.commentManager.getCommentById(id);
@@ -772,19 +790,25 @@ class OnlineManager {
                         const recentlyEditedLocally = (now - (local._lastLocalEditAt || 0) < 400) && (rc.updatedBy === this.user.id);
 
                         if (!local.isDragging && !recentlyEditedLocally) {
-                            local.x = rc.x;
-                            local.y = rc.y;
-                            local.offsetX = rc.offsetX || 0;
-                            local.offsetY = rc.offsetY || 0;
-
                             const nextBubbleId = (rc.attachedBubbleId !== null && this.bubbleManager.getBubbleById(rc.attachedBubbleId))
                                 ? rc.attachedBubbleId
                                 : null;
                             local.attachedBubbleId = nextBubbleId;
+                            local.offsetX = rc.offsetX || 0;
+                            local.offsetY = rc.offsetY || 0;
                             if (local.element) {
                                 local.element.classList.toggle('is-attached', nextBubbleId !== null);
                             }
-                            this.commentManager.updateElementPosition(local);
+
+                            // Only apply raw (rc.x, rc.y) directly for unattached root comments;
+                            // attached comments are positioned deterministically by syncAttachedHierarchy()
+                            // so stale Firebase coordinates can never fight live bubble/parent movement.
+                            const isAttachedToParent = (nextBubbleId !== null) || childCommentIdsWithParent.has(id);
+                            if (!isAttachedToParent) {
+                                local.x = rc.x;
+                                local.y = rc.y;
+                                this.commentManager.updateElementPosition(local);
+                            }
                         }
 
                         if (local.type !== rc.type || local.text !== rc.text || local.url !== rc.url || local.color !== rc.color) {
@@ -822,27 +846,27 @@ class OnlineManager {
 
                 this.commentManager.syncNextId();
 
-                // 4. Synchronize Comment-to-Comment Links
-                const remoteLinksMap = safeData.commentLinks || {};
-                const validRemoteLinks = [];
-                const remoteLinkIds = new Set();
-
-                for (const [key, rl] of Object.entries(remoteLinksMap)) {
-                    if (!rl || typeof rl !== 'object') continue;
-                    const clean = this.firebaseService.sanitizeCommentLink(rl, key);
-                    if (!clean || key === 'NaN' || key === 'undefined') {
-                        this.firebaseService.removeCommentLink(this.roomId, key);
-                        continue;
-                    }
-                    validRemoteLinks.push(clean);
-                    remoteLinkIds.add(clean.id);
-                }
-
+                // 4. Synchronize Comment-to-Comment Links (including relative offsets)
                 validRemoteLinks.forEach(rl => {
                     const localLink = this.commentManager.getCommentLinkById(rl.id);
-                    if (!localLink) {
+                    if (localLink) {
+                        const childComment = this.commentManager.getCommentById(rl.fromCommentId);
+                        const childDragging = childComment && childComment.isDragging;
+                        const recentlyEditedLocally = childComment && (now - (childComment._lastLocalEditAt || 0) < 400);
+                        if (!childDragging && !recentlyEditedLocally) {
+                            if (rl.offsetX !== undefined) localLink.offsetX = rl.offsetX;
+                            if (rl.offsetY !== undefined) localLink.offsetY = rl.offsetY;
+                        }
+                    } else {
                         if (this.commentManager.getCommentById(rl.fromCommentId) && this.commentManager.getCommentById(rl.toCommentId)) {
-                            this.commentManager.connectComments(rl.fromCommentId, rl.toCommentId, rl.id, false);
+                            this.commentManager.connectComments(
+                                rl.fromCommentId,
+                                rl.toCommentId,
+                                rl.id,
+                                false,
+                                rl.offsetX !== undefined ? rl.offsetX : null,
+                                rl.offsetY !== undefined ? rl.offsetY : null
+                            );
                         }
                     }
                 });
@@ -855,7 +879,8 @@ class OnlineManager {
                 });
 
                 this.commentManager.syncNextLinkId();
-                this.commentManager.renderConnections();
+                // Deterministically position all bubble-attached and comment-attached comments
+                this.commentManager.syncAttachedHierarchy(true);
             }
         } finally {
             this.isApplyingRemote = false;
@@ -887,6 +912,9 @@ class OnlineManager {
                 }
                 if (this.connectionManager) {
                     this.connectionManager.render();
+                }
+                if (this.commentManager) {
+                    this.commentManager.syncAttachedHierarchy(false);
                 }
             } else if (!local && bubbleData) {
                 const clean = this.firebaseService.sanitizeBubble(bubbleData, id);
@@ -1009,18 +1037,21 @@ class OnlineManager {
             const local = this.commentManager.getCommentById(id);
             if (local) {
                 if (!local.isDragging) {
-                    local.x = clean.x;
-                    local.y = clean.y;
-                    local.offsetX = clean.offsetX || 0;
-                    local.offsetY = clean.offsetY || 0;
                     const nextBubbleId = (clean.attachedBubbleId !== null && this.bubbleManager.getBubbleById(clean.attachedBubbleId))
                         ? clean.attachedBubbleId
                         : null;
                     local.attachedBubbleId = nextBubbleId;
+                    local.offsetX = clean.offsetX || 0;
+                    local.offsetY = clean.offsetY || 0;
                     if (local.element) {
                         local.element.classList.toggle('is-attached', nextBubbleId !== null);
                     }
-                    this.commentManager.updateElementPosition(local);
+                    const isAttachedToParent = (nextBubbleId !== null) || this.commentManager.hasParentCommentLink(id);
+                    if (!isAttachedToParent) {
+                        local.x = clean.x;
+                        local.y = clean.y;
+                        this.commentManager.updateElementPosition(local);
+                    }
                 }
                 if (local.type !== clean.type || local.text !== clean.text || local.url !== clean.url || local.color !== clean.color) {
                     local.type = clean.type;
@@ -1030,7 +1061,7 @@ class OnlineManager {
                     this.commentManager.applyCommentContent(local);
                     this.commentManager.applyCommentStyle(local);
                 }
-                this.commentManager.renderConnections();
+                this.commentManager.syncAttachedHierarchy(true);
             } else {
                 this.commentManager.createComment({
                     x: clean.x,
@@ -1045,6 +1076,7 @@ class OnlineManager {
                     customId: id,
                     saveSnapshot: false
                 });
+                this.commentManager.syncAttachedHierarchy(true);
             }
         } finally {
             this.isApplyingRemote = false;
@@ -1073,8 +1105,21 @@ class OnlineManager {
 
         this.isApplyingRemote = true;
         try {
-            if (!this.commentManager.getCommentLinkById(clean.id)) {
-                this.commentManager.connectComments(clean.fromCommentId, clean.toCommentId, clean.id, false);
+            const existing = this.commentManager.getCommentLinkById(clean.id);
+            if (existing) {
+                if (clean.offsetX !== undefined) existing.offsetX = clean.offsetX;
+                if (clean.offsetY !== undefined) existing.offsetY = clean.offsetY;
+                this.commentManager.syncAttachedHierarchy(true);
+            } else {
+                this.commentManager.connectComments(
+                    clean.fromCommentId,
+                    clean.toCommentId,
+                    clean.id,
+                    false,
+                    clean.offsetX !== undefined ? clean.offsetX : null,
+                    clean.offsetY !== undefined ? clean.offsetY : null
+                );
+                this.commentManager.syncAttachedHierarchy(true);
             }
         } finally {
             this.isApplyingRemote = false;
@@ -1371,7 +1416,21 @@ class OnlineManager {
         this.firebaseService.updateCommentLink(this.roomId, link.id, {
             id: link.id,
             fromCommentId: link.fromCommentId,
-            toCommentId: link.toCommentId
+            toCommentId: link.toCommentId,
+            offsetX: link.offsetX,
+            offsetY: link.offsetY
+        });
+    }
+
+    onCommentLinkUpdated(link) {
+        if (!this.isOnline || this.isApplyingRemote || !link) return;
+        this.lastLocalActionAt = Date.now();
+        this.firebaseService.updateCommentLink(this.roomId, link.id, {
+            id: link.id,
+            fromCommentId: link.fromCommentId,
+            toCommentId: link.toCommentId,
+            offsetX: link.offsetX,
+            offsetY: link.offsetY
         });
     }
 

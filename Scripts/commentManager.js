@@ -18,8 +18,12 @@ class CommentManager {
 
         this.comments = [];
         this.nextId = 1;
-        this.commentLinks = []; // [{ id, fromCommentId, toCommentId }]
+        this.commentLinks = []; // [{ id, fromCommentId, toCommentId, offsetX, offsetY }]
         this.nextLinkId = 1;
+
+        // Cached SVG connection elements for zero-allocation in-place updates
+        this.svgConnectionNodes = new Map(); // key ('bubble_1' | 'link_1') -> { group, hitbox, outline, line, startDot, endDot }
+        this._connectionsDirty = false;
 
         // Border hover & dot drag state
         this.hoveredBorderInfo = null; // { comment, edgeX, edgeY, localX, localY, side }
@@ -158,6 +162,32 @@ class CommentManager {
         const normalizedUrl = commentType === 'link' ? this.normalizeUrl(url) : '';
         const cleanText = typeof text === 'string' ? text.trim() : '';
 
+        // Prevent duplicate comment DOM elements if ID already exists
+        const existing = this.getCommentById(id);
+        if (existing) {
+            existing.type = commentType;
+            existing.text = cleanText;
+            existing.url = normalizedUrl;
+            existing.color = commentColor;
+            existing.x = Number.isFinite(Number(x)) ? Number(x) : existing.x;
+            existing.y = Number.isFinite(Number(y)) ? Number(y) : existing.y;
+            existing.attachedBubbleId = (attachedBubbleId !== null && attachedBubbleId !== undefined && Number.isFinite(Number(attachedBubbleId)))
+                ? Math.floor(Number(attachedBubbleId))
+                : null;
+            existing.offsetX = Number.isFinite(Number(offsetX)) ? Number(offsetX) : 0;
+            existing.offsetY = Number.isFinite(Number(offsetY)) ? Number(offsetY) : 0;
+            if (existing.element) {
+                existing.element.classList.toggle('is-attached', existing.attachedBubbleId !== null);
+            }
+            this.applyCommentContent(existing);
+            this.applyCommentStyle(existing);
+            this.updateElementPosition(existing);
+            this.syncNextId();
+            this._connectionsDirty = true;
+            this.renderConnections();
+            return existing;
+        }
+
         const el = document.createElement('div');
         el.className = `board-comment comment-type-${commentType}`;
         el.dataset.id = id;
@@ -215,8 +245,10 @@ class CommentManager {
             this.container.appendChild(el);
         }
 
+        this.measureComment(comment);
         this.comments.push(comment);
         this.syncNextId();
+        this._connectionsDirty = true;
         this.renderConnections();
 
         if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
@@ -279,6 +311,27 @@ class CommentManager {
             textSpan.textContent = comment.text || 'Comment';
             contentEl.appendChild(textSpan);
             el.title = '';
+        }
+
+        // Refresh cached dimensions if already mounted in DOM
+        if (el.isConnected) {
+            this.measureComment(comment);
+        } else {
+            comment._width = null;
+            comment._height = null;
+        }
+    }
+
+    /**
+     * Measures and caches comment dimensions in board coordinate space to avoid per-frame layout reflows.
+     */
+    measureComment(comment) {
+        if (!comment || !comment.element) return;
+        const w = comment.element.offsetWidth;
+        const h = comment.element.offsetHeight;
+        if (w > 0 && h > 0) {
+            comment._width = w;
+            comment._height = h;
         }
     }
 
@@ -421,6 +474,8 @@ class CommentManager {
         this.nextId = 1;
         this.commentLinks = [];
         this.nextLinkId = 1;
+        this.svgConnectionNodes.clear();
+        this._connectionsDirty = false;
         if (this.container) {
             this.container.innerHTML = '';
         }
@@ -439,12 +494,14 @@ class CommentManager {
     }
 
     /**
-     * Returns the comment's bounding rectangle in 1000x1000 board coordinate space.
+     * Returns the comment's bounding rectangle in 1000x1000 board coordinate space using cached dimensions.
      */
     getCommentRect(comment) {
-        const el = comment.element;
-        const width = (el && el.offsetWidth) || 96;
-        const height = (el && el.offsetHeight) || 34;
+        if ((!comment._width || !comment._height) && comment.element) {
+            this.measureComment(comment);
+        }
+        const width = comment._width || 96;
+        const height = comment._height || 34;
         const halfW = width * 0.5;
         const halfH = height * 0.5;
         return {
@@ -550,9 +607,9 @@ class CommentManager {
     }
 
     /**
-     * Connects two comments with a visual link.
+     * Connects two comments with a visual link (fromComment follows toComment at their relative offset).
      */
-    connectComments(fromCommentId, toCommentId, customId = null, saveSnapshot = true) {
+    connectComments(fromCommentId, toCommentId, customId = null, saveSnapshot = true, offsetX = null, offsetY = null) {
         const fromId = Number(fromCommentId);
         const toId = Number(toCommentId);
         if (!Number.isFinite(fromId) || !Number.isFinite(toId) || fromId === toId) return null;
@@ -572,14 +629,24 @@ class CommentManager {
         const hasValidCustomId = customId !== null && customId !== undefined && Number.isFinite(Number(customId)) && Number(customId) > 0;
         const id = hasValidCustomId ? Math.floor(Number(customId)) : this.nextLinkId;
 
+        const computedOffsetX = (offsetX !== null && offsetX !== undefined && Number.isFinite(Number(offsetX)))
+            ? Math.round(Number(offsetX) * 100) / 100
+            : Math.round((fromComment.x - toComment.x) * 100) / 100;
+        const computedOffsetY = (offsetY !== null && offsetY !== undefined && Number.isFinite(Number(offsetY)))
+            ? Math.round(Number(offsetY) * 100) / 100
+            : Math.round((fromComment.y - toComment.y) * 100) / 100;
+
         const link = {
             id,
             fromCommentId: fromId,
-            toCommentId: toId
+            toCommentId: toId,
+            offsetX: computedOffsetX,
+            offsetY: computedOffsetY
         };
 
         this.commentLinks.push(link);
         this.syncNextLinkId();
+        this._connectionsDirty = true;
         this.renderConnections();
 
         if (this.onlineManager && this.onlineManager.isOnline && !this.onlineManager.isApplyingRemote) {
@@ -590,6 +657,34 @@ class CommentManager {
             this.savingManager.saveSessionSnapshot();
         }
         return link;
+    }
+
+    hasParentCommentLink(commentId) {
+        const id = Number(commentId);
+        return this.commentLinks.some(l => l.fromCommentId === id);
+    }
+
+    /**
+     * Updates stored (offsetX, offsetY) on all outgoing parent links of a comment
+     * (called when the user drags that comment directly). Returns the updated links.
+     */
+    updateOutgoingLinkOffsets(commentId) {
+        const id = Number(commentId);
+        const comment = this.getCommentById(id);
+        if (!comment) return [];
+
+        const updatedLinks = [];
+        for (const link of this.commentLinks) {
+            if (link.fromCommentId === id) {
+                const parent = this.getCommentById(link.toCommentId);
+                if (parent) {
+                    link.offsetX = Math.round((comment.x - parent.x) * 100) / 100;
+                    link.offsetY = Math.round((comment.y - parent.y) * 100) / 100;
+                    updatedLinks.push(link);
+                }
+            }
+        }
+        return updatedLinks;
     }
 
     syncNextLinkId() {
@@ -659,59 +754,17 @@ class CommentManager {
     }
 
     /**
-     * Moves all comments attached to `parentCommentId` (and recursively any comments attached to them)
-     * by (dx, dy), using a visited set to avoid cycles. Returns array of moved child comments.
+     * Declaratively resolves all attached comment positions in topological order:
+     * 1. Bubble-attached comments -> bubble + (offsetX, offsetY)
+     * 2. Comment-attached comments -> parentComment + (link.offsetX, link.offsetY)
+     * Skips SVG rendering completely when nothing moved (zero idle CPU/GPU cost).
      */
-    moveAttachedCommentChildren(parentCommentId, dx, dy) {
-        const moved = [];
-        if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001) return moved;
-        if (this.commentLinks.length === 0) return moved;
-
-        const rootId = Number(parentCommentId);
-        const visited = new Set([rootId]);
-        const queue = [rootId];
-
-        while (queue.length > 0) {
-            const currentId = queue.shift();
-            for (const link of this.commentLinks) {
-                if (link.toCommentId !== currentId) continue;
-                const childId = link.fromCommentId;
-                if (visited.has(childId)) continue;
-                visited.add(childId);
-
-                const child = this.getCommentById(childId);
-                if (!child || child.isDragging) continue;
-
-                child.x += dx;
-                child.y += dy;
-
-                // Keep bubble offset consistent if the child is also attached to a bubble
-                if (child.attachedBubbleId !== null && this.bubbleManager) {
-                    const b = this.bubbleManager.getBubbleById(child.attachedBubbleId);
-                    if (b) {
-                        child.offsetX = child.x - b.x;
-                        child.offsetY = child.y - b.y;
-                    }
-                }
-
-                this.updateElementPosition(child);
-                moved.push(child);
-                queue.push(childId);
-            }
-        }
-
-        return moved;
-    }
-
-    /**
-     * Syncs attached comments to follow their target bubbles' current positions,
-     * and propagates their movement to any comments attached to them.
-     * Called every frame by the physics loop (comments themselves have no physics forces).
-     */
-    syncWithBubbles() {
+    syncAttachedHierarchy(forceRender = false) {
         if (this.comments.length === 0) return;
 
-        let anyAttached = false;
+        let anyMoved = false;
+
+        // 1. Resolve bubble-attached comments
         for (const comment of this.comments) {
             if (comment.attachedBubbleId === null) continue;
 
@@ -719,32 +772,109 @@ class CommentManager {
             if (!bubble) {
                 comment.attachedBubbleId = null;
                 if (comment.element) comment.element.classList.remove('is-attached');
+                this._connectionsDirty = true;
                 continue;
             }
 
-            anyAttached = true;
-
             if (comment.isDragging) {
-                // While user drags an attached comment, keep its relative offset updated
                 comment.offsetX = comment.x - bubble.x;
                 comment.offsetY = comment.y - bubble.y;
+                anyMoved = true;
             } else {
                 const targetX = bubble.x + comment.offsetX;
                 const targetY = bubble.y + comment.offsetY;
-                const dx = targetX - comment.x;
-                const dy = targetY - comment.y;
-                if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+                if (Math.abs(targetX - comment.x) > 0.01 || Math.abs(targetY - comment.y) > 0.01) {
                     comment.x = targetX;
                     comment.y = targetY;
                     this.updateElementPosition(comment);
-                    this.moveAttachedCommentChildren(comment.id, dx, dy);
+                    anyMoved = true;
                 }
             }
         }
 
-        if (anyAttached) {
+        // 2. Resolve comment-to-comment chains deterministically via BFS from roots
+        if (this.commentLinks.length > 0) {
+            // Map each child -> its primary parent link (if not bubble-attached and not currently dragged)
+            const primaryParent = new Map(); // childId -> link
+            const childrenOf = new Map();    // parentId -> [link, ...]
+
+            for (const link of this.commentLinks) {
+                const child = this.getCommentById(link.fromCommentId);
+                const parent = this.getCommentById(link.toCommentId);
+                if (!child || !parent) continue;
+
+                // Ensure legacy links without stored offsets get initialized once
+                if (!Number.isFinite(Number(link.offsetX)) || !Number.isFinite(Number(link.offsetY))) {
+                    link.offsetX = Math.round((child.x - parent.x) * 100) / 100;
+                    link.offsetY = Math.round((child.y - parent.y) * 100) / 100;
+                }
+
+                if (child.attachedBubbleId === null && !child.isDragging && !primaryParent.has(child.id)) {
+                    primaryParent.set(child.id, link);
+                    if (!childrenOf.has(parent.id)) childrenOf.set(parent.id, []);
+                    childrenOf.get(parent.id).push(link);
+                }
+            }
+
+            if (childrenOf.size > 0) {
+                const visited = new Set();
+                const queue = [];
+
+                // Start BFS from all roots (comments without a primary comment parent)
+                for (const c of this.comments) {
+                    if (!primaryParent.has(c.id)) {
+                        visited.add(c.id);
+                        queue.push(c.id);
+                    }
+                }
+
+                // Fallback in case of a pure cycle with no root
+                for (const c of this.comments) {
+                    if (!visited.has(c.id)) {
+                        visited.add(c.id);
+                        queue.push(c.id);
+                    }
+                }
+
+                while (queue.length > 0) {
+                    const parentId = queue.shift();
+                    const parent = this.getCommentById(parentId);
+                    const childLinks = childrenOf.get(parentId);
+                    if (!parent || !childLinks) continue;
+
+                    for (const link of childLinks) {
+                        const childId = link.fromCommentId;
+                        if (visited.has(childId)) continue;
+                        visited.add(childId);
+
+                        const child = this.getCommentById(childId);
+                        if (!child || child.isDragging) continue;
+
+                        const targetX = parent.x + link.offsetX;
+                        const targetY = parent.y + link.offsetY;
+                        if (Math.abs(targetX - child.x) > 0.01 || Math.abs(targetY - child.y) > 0.01) {
+                            child.x = targetX;
+                            child.y = targetY;
+                            this.updateElementPosition(child);
+                            anyMoved = true;
+                        }
+                        queue.push(childId);
+                    }
+                }
+            }
+        }
+
+        if (anyMoved || forceRender || this._connectionsDirty) {
+            this._connectionsDirty = false;
             this.renderConnections();
         }
+    }
+
+    /**
+     * Alias called every frame by BubblePhysics.update().
+     */
+    syncWithBubbles() {
+        this.syncAttachedHierarchy(false);
     }
 
     /**
@@ -1084,21 +1214,106 @@ class CommentManager {
     }
 
     /**
-     * Renders all SVG lines connecting attached comments to their bubbles.
+     * Creates or reuses an SVG connection node group for zero-allocation in-place updates.
+     */
+    getOrCreateConnectionNode(key, className, datasetKey, datasetVal, isDashed, lineWidth, anchorR) {
+        let entry = this.svgConnectionNodes.get(key);
+        if (entry) return entry;
+
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const dashArray = this.config.connectionDashArray || '5 4';
+
+        const group = document.createElementNS(svgNS, 'g');
+        group.setAttribute('class', className);
+        group.dataset[datasetKey] = datasetVal;
+
+        const hitbox = document.createElementNS(svgNS, 'line');
+        hitbox.setAttribute('class', 'comment-conn-hitbox');
+        hitbox.setAttribute('stroke', 'transparent');
+        hitbox.setAttribute('stroke-width', '14');
+        group.appendChild(hitbox);
+
+        const outline = document.createElementNS(svgNS, 'line');
+        outline.setAttribute('class', 'comment-conn-outline');
+        outline.setAttribute('stroke', 'rgba(0, 0, 0, 0.72)');
+        outline.setAttribute('stroke-width', String(lineWidth + 2.2));
+        outline.setAttribute('stroke-linecap', 'round');
+        if (isDashed) outline.setAttribute('stroke-dasharray', dashArray);
+        group.appendChild(outline);
+
+        const line = document.createElementNS(svgNS, 'line');
+        line.setAttribute('class', 'comment-conn-line');
+        line.setAttribute('stroke-width', String(lineWidth));
+        line.setAttribute('stroke-linecap', 'round');
+        if (isDashed) line.setAttribute('stroke-dasharray', dashArray);
+        group.appendChild(line);
+
+        const startDot = document.createElementNS(svgNS, 'circle');
+        startDot.setAttribute('class', 'comment-conn-dot');
+        startDot.setAttribute('r', String(anchorR));
+        startDot.setAttribute('stroke', 'rgba(0, 0, 0, 0.75)');
+        startDot.setAttribute('stroke-width', '1.4');
+        group.appendChild(startDot);
+
+        const endDot = document.createElementNS(svgNS, 'circle');
+        endDot.setAttribute('class', 'comment-conn-dot');
+        endDot.setAttribute('r', String(anchorR));
+        endDot.setAttribute('stroke', 'rgba(0, 0, 0, 0.75)');
+        endDot.setAttribute('stroke-width', '1.4');
+        group.appendChild(endDot);
+
+        this.connectionsGroup.appendChild(group);
+        entry = { group, hitbox, outline, line, startDot, endDot };
+        this.svgConnectionNodes.set(key, entry);
+        return entry;
+    }
+
+    updateConnectionNodeGeometry(entry, x1, y1, x2, y2, startColor, endColor) {
+        entry.group.style.display = '';
+        entry.hitbox.setAttribute('x1', x1);
+        entry.hitbox.setAttribute('y1', y1);
+        entry.hitbox.setAttribute('x2', x2);
+        entry.hitbox.setAttribute('y2', y2);
+
+        entry.outline.setAttribute('x1', x1);
+        entry.outline.setAttribute('y1', y1);
+        entry.outline.setAttribute('x2', x2);
+        entry.outline.setAttribute('y2', y2);
+
+        entry.line.setAttribute('x1', x1);
+        entry.line.setAttribute('y1', y1);
+        entry.line.setAttribute('x2', x2);
+        entry.line.setAttribute('y2', y2);
+        entry.line.setAttribute('stroke', startColor);
+
+        entry.startDot.setAttribute('cx', x1);
+        entry.startDot.setAttribute('cy', y1);
+        entry.startDot.setAttribute('fill', startColor);
+
+        entry.endDot.setAttribute('cx', x2);
+        entry.endDot.setAttribute('cy', y2);
+        entry.endDot.setAttribute('fill', endColor);
+    }
+
+    /**
+     * Renders all SVG lines connecting attached comments to bubbles and other comments
+     * using pooled SVG nodes updated in-place.
      */
     renderConnections() {
         if (!this.connectionsGroup) return;
-        const svgNS = 'http://www.w3.org/2000/svg';
-        this.connectionsGroup.innerHTML = '';
 
         const lineWidth = this.config.connectionLineWidth || 2.2;
-        const dashArray = this.config.connectionDashArray || '5 4';
         const anchorR = this.config.connectionAnchorRadius || 4;
+        const activeKeys = new Set();
 
+        // 1. Render comment-to-bubble connections
         for (const comment of this.comments) {
             if (comment.attachedBubbleId === null) continue;
             const bubble = this.bubbleManager ? this.bubbleManager.getBubbleById(comment.attachedBubbleId) : null;
             if (!bubble) continue;
+
+            const key = `bubble_${comment.id}`;
+            activeKeys.add(key);
 
             const rect = this.getCommentRect(comment);
             const bubbleRadius = typeof this.bubbleManager.getBubbleRadius === 'function'
@@ -1108,85 +1323,37 @@ class CommentManager {
             const dx = bubble.x - rect.cx;
             const dy = bubble.y - rect.cy;
             const centerDist = Math.hypot(dx, dy);
-            if (centerDist < 1) continue;
+
+            const entry = this.getOrCreateConnectionNode(
+                key,
+                'comment-connection',
+                'commentId',
+                comment.id,
+                true,
+                lineWidth,
+                anchorR
+            );
+
+            if (centerDist < 1) {
+                entry.group.style.display = 'none';
+                continue;
+            }
 
             const startPt = this.getRectEdgeIntersection(rect, bubble.x, bubble.y);
             const startDistFromCenter = Math.hypot(startPt.x - rect.cx, startPt.y - rect.cy);
 
-            // If the comment overlaps the bubble perimeter, skip drawing an inverted line
-            if (centerDist <= startDistFromCenter + bubbleRadius) continue;
+            if (centerDist <= startDistFromCenter + bubbleRadius) {
+                entry.group.style.display = 'none';
+                continue;
+            }
 
             const nx = dx / centerDist;
             const ny = dy / centerDist;
             const endX = bubble.x - nx * bubbleRadius;
             const endY = bubble.y - ny * bubbleRadius;
-
             const accentColor = comment.color || this.config.defaultColor || '#f59e0b';
 
-            const group = document.createElementNS(svgNS, 'g');
-            group.setAttribute('class', 'comment-connection');
-            group.dataset.commentId = comment.id;
-
-            // Invisible wide hitbox for right-clicking / hovering
-            const hitbox = document.createElementNS(svgNS, 'line');
-            hitbox.setAttribute('class', 'comment-conn-hitbox');
-            hitbox.setAttribute('x1', startPt.x);
-            hitbox.setAttribute('y1', startPt.y);
-            hitbox.setAttribute('x2', endX);
-            hitbox.setAttribute('y2', endY);
-            hitbox.setAttribute('stroke', 'transparent');
-            hitbox.setAttribute('stroke-width', '14');
-            group.appendChild(hitbox);
-
-            // Subtle dark backing stroke for contrast on any noise background
-            const outline = document.createElementNS(svgNS, 'line');
-            outline.setAttribute('class', 'comment-conn-outline');
-            outline.setAttribute('x1', startPt.x);
-            outline.setAttribute('y1', startPt.y);
-            outline.setAttribute('x2', endX);
-            outline.setAttribute('y2', endY);
-            outline.setAttribute('stroke', 'rgba(0, 0, 0, 0.7)');
-            outline.setAttribute('stroke-width', String(lineWidth + 2.2));
-            outline.setAttribute('stroke-dasharray', dashArray);
-            outline.setAttribute('stroke-linecap', 'round');
-            group.appendChild(outline);
-
-            // Main colored dashed connector line
-            const line = document.createElementNS(svgNS, 'line');
-            line.setAttribute('class', 'comment-conn-line');
-            line.setAttribute('x1', startPt.x);
-            line.setAttribute('y1', startPt.y);
-            line.setAttribute('x2', endX);
-            line.setAttribute('y2', endY);
-            line.setAttribute('stroke', accentColor);
-            line.setAttribute('stroke-width', String(lineWidth));
-            line.setAttribute('stroke-dasharray', dashArray);
-            line.setAttribute('stroke-linecap', 'round');
-            group.appendChild(line);
-
-            // Anchor dot on comment border
-            const startDot = document.createElementNS(svgNS, 'circle');
-            startDot.setAttribute('class', 'comment-conn-dot');
-            startDot.setAttribute('cx', startPt.x);
-            startDot.setAttribute('cy', startPt.y);
-            startDot.setAttribute('r', String(anchorR));
-            startDot.setAttribute('fill', accentColor);
-            startDot.setAttribute('stroke', 'rgba(0, 0, 0, 0.75)');
-            startDot.setAttribute('stroke-width', '1.4');
-            group.appendChild(startDot);
-
-            // Anchor dot on bubble edge
-            const endDot = document.createElementNS(svgNS, 'circle');
-            endDot.setAttribute('class', 'comment-conn-dot');
-            endDot.setAttribute('cx', endX);
-            endDot.setAttribute('cy', endY);
-            endDot.setAttribute('r', String(anchorR));
-            endDot.setAttribute('fill', accentColor);
-            endDot.setAttribute('stroke', 'rgba(0, 0, 0, 0.75)');
-            endDot.setAttribute('stroke-width', '1.4');
-            group.appendChild(endDot);
-
-            this.connectionsGroup.appendChild(group);
+            this.updateConnectionNodeGeometry(entry, startPt.x, startPt.y, endX, endY, accentColor, accentColor);
         }
 
         // 2. Render comment-to-comment connections
@@ -1195,81 +1362,55 @@ class CommentManager {
             const toComment = this.getCommentById(link.toCommentId);
             if (!fromComment || !toComment) continue;
 
+            const key = `link_${link.id}`;
+            activeKeys.add(key);
+
             const fromRect = this.getCommentRect(fromComment);
             const toRect = this.getCommentRect(toComment);
 
             const dx = toRect.cx - fromRect.cx;
             const dy = toRect.cy - fromRect.cy;
             const centerDist = Math.hypot(dx, dy);
-            if (centerDist < 1) continue;
+
+            const entry = this.getOrCreateConnectionNode(
+                key,
+                'comment-connection comment-to-comment-connection',
+                'linkId',
+                link.id,
+                false,
+                lineWidth,
+                anchorR
+            );
+
+            if (centerDist < 1) {
+                entry.group.style.display = 'none';
+                continue;
+            }
 
             const startPt = this.getRectEdgeIntersection(fromRect, toRect.cx, toRect.cy);
             const endPt = this.getRectEdgeIntersection(toRect, fromRect.cx, fromRect.cy);
-
             const startDist = Math.hypot(startPt.x - fromRect.cx, startPt.y - fromRect.cy);
             const endDist = Math.hypot(endPt.x - toRect.cx, endPt.y - toRect.cy);
-            if (centerDist <= startDist + endDist) continue;
+
+            if (centerDist <= startDist + endDist) {
+                entry.group.style.display = 'none';
+                continue;
+            }
 
             const fromColor = fromComment.color || this.config.defaultColor || '#f59e0b';
             const toColor = toComment.color || this.config.defaultColor || '#f59e0b';
 
-            const group = document.createElementNS(svgNS, 'g');
-            group.setAttribute('class', 'comment-connection comment-to-comment-connection');
-            group.dataset.linkId = link.id;
+            this.updateConnectionNodeGeometry(entry, startPt.x, startPt.y, endPt.x, endPt.y, fromColor, toColor);
+        }
 
-            const hitbox = document.createElementNS(svgNS, 'line');
-            hitbox.setAttribute('class', 'comment-conn-hitbox');
-            hitbox.setAttribute('x1', startPt.x);
-            hitbox.setAttribute('y1', startPt.y);
-            hitbox.setAttribute('x2', endPt.x);
-            hitbox.setAttribute('y2', endPt.y);
-            hitbox.setAttribute('stroke', 'transparent');
-            hitbox.setAttribute('stroke-width', '14');
-            group.appendChild(hitbox);
-
-            const outline = document.createElementNS(svgNS, 'line');
-            outline.setAttribute('class', 'comment-conn-outline');
-            outline.setAttribute('x1', startPt.x);
-            outline.setAttribute('y1', startPt.y);
-            outline.setAttribute('x2', endPt.x);
-            outline.setAttribute('y2', endPt.y);
-            outline.setAttribute('stroke', 'rgba(0, 0, 0, 0.72)');
-            outline.setAttribute('stroke-width', String(lineWidth + 2.2));
-            outline.setAttribute('stroke-linecap', 'round');
-            group.appendChild(outline);
-
-            const line = document.createElementNS(svgNS, 'line');
-            line.setAttribute('class', 'comment-conn-line');
-            line.setAttribute('x1', startPt.x);
-            line.setAttribute('y1', startPt.y);
-            line.setAttribute('x2', endPt.x);
-            line.setAttribute('y2', endPt.y);
-            line.setAttribute('stroke', fromColor);
-            line.setAttribute('stroke-width', String(lineWidth));
-            line.setAttribute('stroke-linecap', 'round');
-            group.appendChild(line);
-
-            const startDot = document.createElementNS(svgNS, 'circle');
-            startDot.setAttribute('class', 'comment-conn-dot');
-            startDot.setAttribute('cx', startPt.x);
-            startDot.setAttribute('cy', startPt.y);
-            startDot.setAttribute('r', String(anchorR));
-            startDot.setAttribute('fill', fromColor);
-            startDot.setAttribute('stroke', 'rgba(0, 0, 0, 0.75)');
-            startDot.setAttribute('stroke-width', '1.4');
-            group.appendChild(startDot);
-
-            const endDot = document.createElementNS(svgNS, 'circle');
-            endDot.setAttribute('class', 'comment-conn-dot');
-            endDot.setAttribute('cx', endPt.x);
-            endDot.setAttribute('cy', endPt.y);
-            endDot.setAttribute('r', String(anchorR));
-            endDot.setAttribute('fill', toColor);
-            endDot.setAttribute('stroke', 'rgba(0, 0, 0, 0.75)');
-            endDot.setAttribute('stroke-width', '1.4');
-            group.appendChild(endDot);
-
-            this.connectionsGroup.appendChild(group);
+        // 3. Remove any stale SVG nodes for deleted/detached connections
+        for (const [key, entry] of this.svgConnectionNodes.entries()) {
+            if (!activeKeys.has(key)) {
+                if (entry.group && entry.group.parentNode) {
+                    entry.group.parentNode.removeChild(entry.group);
+                }
+                this.svgConnectionNodes.delete(key);
+            }
         }
     }
 
@@ -1282,7 +1423,9 @@ class CommentManager {
             .map(l => ({
                 id: Math.floor(Number(l.id)),
                 fromCommentId: Math.floor(Number(l.fromCommentId)),
-                toCommentId: Math.floor(Number(l.toCommentId))
+                toCommentId: Math.floor(Number(l.toCommentId)),
+                offsetX: Number.isFinite(Number(l.offsetX)) ? Math.round(Number(l.offsetX) * 100) / 100 : 0,
+                offsetY: Number.isFinite(Number(l.offsetY)) ? Math.round(Number(l.offsetY) * 100) / 100 : 0
             }));
     }
 
@@ -1296,9 +1439,16 @@ class CommentManager {
 
         linksArray.forEach(l => {
             if (!l) return;
-            this.connectComments(l.fromCommentId, l.toCommentId, l.id || null, false);
+            this.connectComments(
+                l.fromCommentId,
+                l.toCommentId,
+                l.id || null,
+                false,
+                l.offsetX !== undefined ? l.offsetX : null,
+                l.offsetY !== undefined ? l.offsetY : null
+            );
         });
-        this.renderConnections();
+        this.syncAttachedHierarchy(true);
     }
 
     /**

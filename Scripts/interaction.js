@@ -933,12 +933,8 @@ class InteractionManager {
                     this.commentDragMoved = true;
                 }
                 if (this.commentDragMoved) {
-                    const prevX = c.x;
-                    const prevY = c.y;
                     c.x = boardCoords.x + this.commentDragOffsetX;
                     c.y = boardCoords.y + this.commentDragOffsetY;
-                    const dx = c.x - prevX;
-                    const dy = c.y - prevY;
                     if (c.attachedBubbleId !== null) {
                         const attachedBubble = this.manager.getBubbleById(c.attachedBubbleId);
                         if (attachedBubble) {
@@ -946,12 +942,13 @@ class InteractionManager {
                             c.offsetY = c.y - attachedBubble.y;
                         }
                     }
+                    const updatedLinks = this.commentManager.updateOutgoingLinkOffsets(c.id);
                     this.commentManager.updateElementPosition(c);
-                    const movedChildren = this.commentManager.moveAttachedCommentChildren(c.id, dx, dy);
-                    this.commentManager.renderConnections();
+                    this.commentManager.syncAttachedHierarchy(true);
 
                     if (this.commentManager.onlineManager && this.commentManager.onlineManager.isOnline) {
-                        this.commentManager.onlineManager.onCommentDrag([c, ...movedChildren]);
+                        this.commentManager.onlineManager.onCommentDrag(c);
+                        updatedLinks.forEach(l => this.commentManager.onlineManager.onCommentLinkUpdated(l));
                     }
                 }
                 return;
@@ -1147,25 +1144,9 @@ class InteractionManager {
                     this.commentManager.openCommentLink(comment.id);
                 } else if (didMove) {
                     if (this.commentManager && this.commentManager.onlineManager && this.commentManager.onlineManager.isOnline) {
-                        const movedChildren = this.commentManager.moveAttachedCommentChildren(comment.id, 0, 0);
-                        // Also flush any children attached to this comment
-                        const toFlush = [comment];
-                        const visited = new Set([comment.id]);
-                        const q = [comment.id];
-                        while (q.length > 0) {
-                            const cur = q.shift();
-                            for (const l of this.commentManager.commentLinks) {
-                                if (l.toCommentId === cur && !visited.has(l.fromCommentId)) {
-                                    visited.add(l.fromCommentId);
-                                    const child = this.commentManager.getCommentById(l.fromCommentId);
-                                    if (child) {
-                                        toFlush.push(child);
-                                        q.push(child.id);
-                                    }
-                                }
-                            }
-                        }
-                        this.commentManager.onlineManager.onCommentDragEnd(toFlush);
+                        const updatedLinks = this.commentManager.updateOutgoingLinkOffsets(comment.id);
+                        this.commentManager.onlineManager.onCommentDragEnd(comment);
+                        updatedLinks.forEach(l => this.commentManager.onlineManager.onCommentLinkUpdated(l));
                     } else if (this.manager.savingManager) {
                         this.manager.savingManager.saveSessionSnapshot();
                     }

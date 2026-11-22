@@ -214,11 +214,20 @@ class FirebaseService {
             return null;
         }
 
-        return {
+        const res = {
             id: Math.floor(rawId),
             fromCommentId: Math.floor(fromCommentId),
             toCommentId: Math.floor(toCommentId)
         };
+
+        if (l.offsetX !== undefined && l.offsetX !== null && Number.isFinite(Number(l.offsetX))) {
+            res.offsetX = Math.round(Number(l.offsetX) * 100) / 100;
+        }
+        if (l.offsetY !== undefined && l.offsetY !== null && Number.isFinite(Number(l.offsetY))) {
+            res.offsetY = Math.round(Number(l.offsetY) * 100) / 100;
+        }
+
+        return res;
     }
 
     /**
