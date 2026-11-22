@@ -158,6 +158,7 @@ class OnlineManager {
             id: bubble.id,
             name: bubble.name,
             color: bubble.color,
+            description: bubble.description || '',
             x: bubble.x,
             y: bubble.y,
             scale: bubble.scale,
@@ -421,7 +422,7 @@ class OnlineManager {
                 state.bubbles.forEach(b => {
                     const clean = this.firebaseService.sanitizeBubble(b, b && b.id);
                     if (clean) {
-                        this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale);
+                        this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale, clean.description || '');
                     }
                 });
             }
@@ -470,7 +471,7 @@ class OnlineManager {
             rawBubbles.forEach(b => {
                 const clean = this.firebaseService.sanitizeBubble(b, b && b.id);
                 if (clean) {
-                    const created = this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale);
+                    const created = this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale, clean.description || '');
                     if (created) {
                         created._lastSyncedX = clean.x;
                         created._lastSyncedY = clean.y;
@@ -564,6 +565,10 @@ class OnlineManager {
                         this.bubbleManager.setBubbleScale(id, rb.scale, false);
                     }
 
+                    if (rb.description !== undefined && local.description !== rb.description) {
+                        this.bubbleManager.setBubbleDescription(id, rb.description, false);
+                    }
+
                     if (!!local.isLocked !== !!rb.isLocked) {
                         local.isLocked = !!rb.isLocked;
                         local.vx = 0;
@@ -575,7 +580,7 @@ class OnlineManager {
                         }
                     }
                 } else {
-                    const created = this.bubbleManager.createBubble(rb.x, rb.y, rb.name, rb.color, id, rb.isLocked, rb.scale);
+                    const created = this.bubbleManager.createBubble(rb.x, rb.y, rb.name, rb.color, id, rb.isLocked, rb.scale, rb.description || '');
                     if (created) {
                         created._lastSyncedX = rb.x;
                         created._lastSyncedY = rb.y;
@@ -673,7 +678,7 @@ class OnlineManager {
             } else if (!local && bubbleData) {
                 const clean = this.firebaseService.sanitizeBubble(bubbleData, id);
                 if (clean) {
-                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale);
+                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale, clean.description || '');
                 }
             }
         } finally {
@@ -706,13 +711,16 @@ class OnlineManager {
                 if (data.scale !== undefined && !local.isResizing && local.scale !== data.scale) {
                     this.bubbleManager.setBubbleScale(id, data.scale, false);
                 }
+                if (data.description !== undefined && local.description !== data.description) {
+                    this.bubbleManager.setBubbleDescription(id, data.description, false);
+                }
                 if (data.isLocked !== undefined && !!local.isLocked !== !!data.isLocked) {
                     this.bubbleManager.toggleLock(id);
                 }
             } else {
                 const clean = this.firebaseService.sanitizeBubble(data, id);
                 if (clean) {
-                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale);
+                    this.bubbleManager.createBubble(clean.x, clean.y, clean.name, clean.color, clean.id, clean.isLocked, clean.scale, clean.description || '');
                 }
             }
         } finally {

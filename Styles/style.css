@@ -314,6 +314,61 @@ input[type="range"]::-webkit-slider-thumb:hover {
     color: #7dd3fc;
 }
 
+/* Bubble Description Box (Black square, crisp white outline, white text, scales with content) */
+.bubble-description-box {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    background: #000000;
+    border: 1.5px solid #ffffff;
+    color: #ffffff;
+    border-radius: 0;
+    padding: 6px 10px;
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    width: max-content;
+    max-width: 250px;
+    min-width: 32px;
+    text-align: center;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.85);
+    pointer-events: none;
+    z-index: 70;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+    display: none;
+    box-sizing: border-box;
+}
+
+.bubble-description-box.has-content {
+    display: block;
+}
+
+.universe-bubble:hover,
+.universe-bubble.is-bubble-hovered {
+    z-index: 40;
+}
+
+.universe-bubble:hover .bubble-description-box.has-content,
+.universe-bubble.is-bubble-hovered .bubble-description-box.has-content {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+}
+
+.universe-bubble.is-dragging .bubble-description-box,
+.universe-bubble.is-resizing .bubble-description-box,
+body.is-dragging-bubble .bubble-description-box,
+body.is-resizing-bubble .bubble-description-box {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
 body.is-resizing-bubble,
 body.is-resizing-bubble * {
     user-select: none !important;
@@ -790,6 +845,13 @@ body.is-connecting-mode * {
     border-color: #ff4d4d;
     box-shadow: 0 0 10px rgba(255, 77, 77, 0.4);
     animation: shake 0.3s ease;
+}
+
+.modal-textarea {
+    resize: vertical;
+    min-height: 72px;
+    font-family: inherit;
+    line-height: 1.45;
 }
 
 @keyframes shake {

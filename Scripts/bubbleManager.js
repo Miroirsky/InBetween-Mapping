@@ -183,7 +183,7 @@ class BubbleManager {
     /**
      * Creates and adds a new universe bubble.
      */
-    createBubble(x, y, name = '', color = null, customId = null, isLocked = false, scale = 1.0) {
+    createBubble(x, y, name = '', color = null, customId = null, isLocked = false, scale = 1.0, description = '') {
         this.calculateDimensions();
 
         const bubbleScale = this.snapScale(scale);
@@ -227,6 +227,17 @@ class BubbleManager {
             if (color) {
                 existing.color = color;
             }
+            if (description !== undefined && description !== null) {
+                existing.description = (typeof description === 'string') ? description.trim() : '';
+                if (existing.descriptionElement) {
+                    existing.descriptionElement.textContent = existing.description;
+                    if (existing.description.length > 0) {
+                        existing.descriptionElement.classList.add('has-content');
+                    } else {
+                        existing.descriptionElement.classList.remove('has-content');
+                    }
+                }
+            }
             existing.isLocked = !!isLocked;
             if (existing.isLocked) {
                 existing.element.classList.add('is-locked');
@@ -243,10 +254,20 @@ class BubbleManager {
             ? name.trim()
             : `Universe ${id}`;
         const bubbleColor = color || this.config.bubbleColor || '#000000';
+        const bubbleDesc = (typeof description === 'string') ? description.trim() : '';
 
         const el = document.createElement('div');
         el.className = 'universe-bubble';
         el.dataset.id = id;
+
+        // Description tooltip box (displays on top of the bubble when hovered)
+        const descEl = document.createElement('div');
+        descEl.className = 'bubble-description-box';
+        descEl.textContent = bubbleDesc;
+        if (bubbleDesc.length > 0) {
+            descEl.classList.add('has-content');
+        }
+        el.appendChild(descEl);
 
         // Interactive resize outline ring (appears when hovered)
         const outlineEl = document.createElement('div');
@@ -281,6 +302,7 @@ class BubbleManager {
             id,
             name: bubbleName,
             color: bubbleColor,
+            description: bubbleDesc,
             x: targetX,
             y: targetY,
             vx: 0,
@@ -290,6 +312,7 @@ class BubbleManager {
             isDragging: false,
             isResizing: false,
             element: el,
+            descriptionElement: descEl,
             outlineElement: outlineEl,
             sizeBadge: sizeBadgeEl,
             nameElement: nameEl,
@@ -344,6 +367,35 @@ class BubbleManager {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Sets or updates the description of a bubble.
+     */
+    setBubbleDescription(id, description, syncOnline = true) {
+        const bubble = this.getBubbleById(id);
+        if (!bubble) return false;
+
+        bubble.description = (typeof description === 'string') ? description.trim() : '';
+
+        if (bubble.descriptionElement) {
+            bubble.descriptionElement.textContent = bubble.description;
+            if (bubble.description.length > 0) {
+                bubble.descriptionElement.classList.add('has-content');
+            } else {
+                bubble.descriptionElement.classList.remove('has-content');
+            }
+        }
+
+        if (this.savingManager) {
+            this.savingManager.saveSessionSnapshot();
+        }
+
+        if (syncOnline && this.onlineManager && this.onlineManager.isOnline) {
+            this.onlineManager.onBubbleRenamed(bubble);
+        }
+
+        return true;
     }
 
     /**

@@ -46,6 +46,7 @@ class ContextMenu {
                 </div>
                 <div class="modal-body">
                     <input type="text" id="modal-input" class="modal-input" maxlength="50" autocomplete="off" spellcheck="false" placeholder="Enter name...">
+                    <textarea id="modal-textarea" class="modal-input modal-textarea" rows="4" maxlength="500" placeholder="Enter description..." style="display: none;"></textarea>
                 </div>
                 <div class="modal-footer">
                     <button id="modal-cancel-btn" class="modal-btn secondary">Cancel</button>
@@ -57,6 +58,7 @@ class ContextMenu {
         this.modalElement = modal;
 
         this.modalInput = modal.querySelector('#modal-input');
+        this.modalTextarea = modal.querySelector('#modal-textarea');
         this.modalTitle = modal.querySelector('#modal-title');
         this.modalConfirmBtn = modal.querySelector('#modal-confirm-btn');
         this.modalCancelBtn = modal.querySelector('#modal-cancel-btn');
@@ -72,18 +74,43 @@ class ContextMenu {
                 this.closeModal();
             }
         });
+
+        if (this.modalTextarea) {
+            this.modalTextarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    this.modalConfirmBtn.click();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    this.closeModal();
+                }
+            });
+        }
     }
 
     /**
-     * Reusable in-app prompt for connection naming/renaming
+     * Reusable in-app prompt for connection naming, universe renaming, and descriptions
      */
-    showPrompt({ title, placeholder, defaultValue, confirmText, onSubmit }) {
+    showPrompt({ title, placeholder, defaultValue, confirmText, allowEmpty = false, isMultiline = false, onSubmit }) {
         this.close(); // Close any open context menu
         this.modalTitle.textContent = title || 'Name Connection';
-        this.modalInput.placeholder = placeholder || 'Enter connection name...';
-        this.modalInput.value = defaultValue || '';
-        this.modalConfirmBtn.textContent = confirmText || 'Save';
 
+        const useMultiline = !!(isMultiline && this.modalTextarea);
+        const activeInput = useMultiline ? this.modalTextarea : this.modalInput;
+
+        if (useMultiline) {
+            this.modalInput.style.display = 'none';
+            this.modalTextarea.style.display = 'block';
+            this.modalTextarea.placeholder = placeholder || 'Enter description...';
+            this.modalTextarea.value = defaultValue || '';
+        } else {
+            this.modalInput.style.display = 'block';
+            if (this.modalTextarea) this.modalTextarea.style.display = 'none';
+            this.modalInput.placeholder = placeholder || 'Enter name...';
+            this.modalInput.value = defaultValue || '';
+        }
+
+        this.modalConfirmBtn.textContent = confirmText || 'Save';
         this.modalElement.classList.add('visible');
 
         // Clean up previous event listeners by cloning
@@ -92,20 +119,20 @@ class ContextMenu {
         this.modalConfirmBtn = newConfirmBtn;
 
         this.modalConfirmBtn.addEventListener('click', () => {
-            const val = this.modalInput.value.trim();
-            if (val.length > 0) {
+            const val = activeInput.value.trim();
+            if (val.length > 0 || allowEmpty) {
                 this.closeModal();
                 if (onSubmit) onSubmit(val);
             } else {
-                this.modalInput.focus();
-                this.modalInput.classList.add('input-error');
-                setTimeout(() => this.modalInput.classList.remove('input-error'), 400);
+                activeInput.focus();
+                activeInput.classList.add('input-error');
+                setTimeout(() => activeInput.classList.remove('input-error'), 400);
             }
         });
 
         setTimeout(() => {
-            this.modalInput.focus();
-            this.modalInput.select();
+            activeInput.focus();
+            activeInput.select();
         }, 50);
     }
 
@@ -420,6 +447,30 @@ class ContextMenu {
                     }
                 },
                 {
+                    label: `Set Description (${count})`,
+                    icon: `
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                        </svg>
+                    `,
+                    action: () => {
+                        this.showPrompt({
+                            title: `Set Description (${count} Universes)`,
+                            placeholder: 'Enter description for all selected universes...',
+                            defaultValue: bubble.description || '',
+                            confirmText: 'Apply',
+                            allowEmpty: true,
+                            isMultiline: true,
+                            onSubmit: (newDesc) => {
+                                targetIds.forEach(id => this.manager.setBubbleDescription(id, newDesc));
+                            }
+                        });
+                    }
+                },
+                {
                     label: allLocked ? `Unlock Selected (${count})` : `Lock Selected (${count})`,
                     icon: allLocked ? `
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -529,6 +580,30 @@ class ContextMenu {
                         confirmText: 'Update',
                         onSubmit: (newName) => {
                             this.manager.renameBubble(bubbleId, newName);
+                        }
+                    });
+                }
+            },
+            {
+                label: bubble.description ? 'Edit Description' : 'Add Description',
+                icon: `
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                    </svg>
+                `,
+                action: () => {
+                    this.showPrompt({
+                        title: `${bubble.name} Description`,
+                        placeholder: 'Enter universe description...',
+                        defaultValue: bubble.description || '',
+                        confirmText: 'Save',
+                        allowEmpty: true,
+                        isMultiline: true,
+                        onSubmit: (newDesc) => {
+                            this.manager.setBubbleDescription(bubbleId, newDesc);
                         }
                     });
                 }

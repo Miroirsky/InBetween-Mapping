@@ -116,6 +116,7 @@ class FirebaseService {
             id,
             name: rawName.length > 0 ? rawName : `Universe ${id}`,
             color: (b.color && typeof b.color === 'string') ? b.color : '#000000',
+            description: (b.description && typeof b.description === 'string') ? b.description.trim() : '',
             x: Math.round(x * 100) / 100,
             y: Math.round(y * 100) / 100,
             scale,
